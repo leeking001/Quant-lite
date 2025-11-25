@@ -20,7 +20,7 @@ import matplotlib.dates
 if not hasattr(matplotlib.dates, 'warnings'):
     matplotlib.dates.warnings = warnings
 
-# 设置 Matplotlib 为深色模式，适配 BigQuant 风格
+# 默认开启深色模式 (用于 Tab 1 的 Streamlit 原生绘图)
 plt.style.use('dark_background') 
 
 import backtrader as bt
@@ -222,7 +222,7 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
         return None, None
 
 # ==========================================
-# 3. 文案内容 (新手指南 & 策略解释)
+# 3. 文案内容
 # ==========================================
 def show_user_guide():
     st.markdown("""
@@ -328,7 +328,7 @@ def main():
             params['rsi_period'] = st.slider("Period", 5, 30, 14)
             params['rsi_low'] = st.slider("Low", 10, 40, 30)
             params['rsi_high'] = st.slider("High", 60, 90, 70)
-        # ... 其他参数省略，逻辑同前 ...
+        # ... 其他参数省略 ...
 
         run_btn = st.button("🚀 开始回测 (Run Backtest)", type="primary")
 
@@ -369,7 +369,7 @@ def main():
                     final_cash = cerebro.broker.getvalue()
                     total_return = (final_cash - cash) / cash
                     
-                    # 1. 核心指标卡片 (BigQuant 风格)
+                    # 1. 核心指标卡片
                     st.markdown("### 核心绩效 (Key Metrics)")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("最终资产", f"${final_cash:,.0f}")
@@ -387,7 +387,6 @@ def main():
                     # 2. 净值曲线 (深色模式)
                     st.markdown("### 净值走势 (Equity Curve)")
                     fig, ax = plt.subplots(figsize=(12, 6))
-                    # 设置背景色
                     fig.patch.set_facecolor('#0E1117')
                     ax.set_facecolor('#0E1117')
                     
@@ -420,12 +419,17 @@ def main():
         else:
             st.info("👈 请在左侧设置参数并点击 '开始回测'")
 
-    # --- Tab 2: 专业报告 ---
+    # --- Tab 2: 专业报告 (修复版) ---
     with tab2:
         if 'strat_returns' in st.session_state:
             st.markdown("### 深度量化分析报告 (QuantStats)")
             st.caption("Generating Wall Street grade report...")
             try:
+                # ==========================================
+                # 关键修复：临时切换回白色背景模式
+                # ==========================================
+                plt.style.use('default') 
+                
                 report_file = "qs_report.html"
                 qs.reports.html(
                     st.session_state['strat_returns'], 
@@ -434,6 +438,11 @@ def main():
                     title=f"{st.session_state['ticker']} Analysis",
                     download_filename=report_file
                 )
+                
+                # 生成完后，切回深色模式，以免影响 Tab 1 的图表
+                plt.style.use('dark_background') 
+                # ==========================================
+
                 with open(report_file, 'r', encoding='utf-8') as f:
                     report_html = f.read()
                 components.html(report_html, height=1000, scrolling=True)
