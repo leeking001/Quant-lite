@@ -5,11 +5,11 @@ import yfinance as yf
 import akshare as ak
 import numpy as np
 import time
-import quantstats as qs # V1.3 新增核心库
-import streamlit.components.v1 as components # 用于渲染 HTML
+import quantstats as qs
+import streamlit.components.v1 as components
 
 # ==========================================
-# 0. 系统配置
+# 0. 系统配置与 BigQuant 风格 CSS
 # ==========================================
 import matplotlib
 matplotlib.use('Agg') 
@@ -20,12 +20,77 @@ import matplotlib.dates
 if not hasattr(matplotlib.dates, 'warnings'):
     matplotlib.dates.warnings = warnings
 
-plt.style.use('bmh') 
+# 设置 Matplotlib 为深色模式，适配 BigQuant 风格
+plt.style.use('dark_background') 
 
 import backtrader as bt
 
+def inject_custom_css():
+    st.markdown("""
+    <style>
+        /* 全局背景色 - 深空灰 */
+        .stApp {
+            background-color: #0E1117;
+            color: #FAFAFA;
+        }
+        
+        /* 侧边栏背景 - 更深的灰 */
+        [data-testid="stSidebar"] {
+            background-color: #161B22;
+            border-right: 1px solid #30363D;
+        }
+
+        /* 标题样式 */
+        h1, h2, h3 {
+            color: #58A6FF !important; /* BigQuant 蓝 */
+            font-family: 'Helvetica Neue', sans-serif;
+        }
+
+        /* 按钮样式 - 极客蓝 */
+        div.stButton > button {
+            background-color: #238636;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        div.stButton > button:hover {
+            background-color: #2EA043;
+        }
+
+        /* 指标卡片样式 */
+        [data-testid="stMetricValue"] {
+            font-size: 24px;
+            color: #3FB950 !important; /* 涨幅绿 */
+        }
+        [data-testid="stMetricLabel"] {
+            color: #8B949E;
+        }
+        
+        /* Tab 样式 */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 24px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 50px;
+            white-space: pre-wrap;
+            background-color: transparent;
+            border-radius: 4px 4px 0px 0px;
+            gap: 1px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            color: #8B949E;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: transparent;
+            color: #58A6FF;
+            border-bottom: 2px solid #58A6FF;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 # ==========================================
-# 1. 策略类 (保持 V1.1 风控版逻辑)
+# 1. 策略类 (逻辑保持不变)
 # ==========================================
 class MegaStrategy(bt.Strategy):
     params = (
@@ -99,7 +164,7 @@ class MegaStrategy(bt.Strategy):
             elif self.params.strategy_type == 'Momentum' and self.mom < 0: self.sell()
 
 # ==========================================
-# 2. 数据获取 (增强版：重试 + 小写修复)
+# 2. 数据获取
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_data_with_benchmark(source, ticker, start_date, end_date):
@@ -109,7 +174,6 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
     
     try:
         if source == "美股/港股 (Yahoo)":
-            # 1. 个股
             for i in range(max_retries):
                 try:
                     if i > 0: time.sleep(1)
@@ -121,7 +185,6 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
                 stock_df.columns = stock_df.columns.get_level_values(0)
             stock_df.columns = stock_df.columns.str.lower()
             
-            # 2. 基准
             bench_ticker = "^GSPC" 
             for i in range(max_retries):
                 try:
@@ -137,7 +200,6 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
         elif source == "A股 (AkShare)":
             s_str = start_date.strftime("%Y%m%d")
             e_str = end_date.strftime("%Y%m%d")
-            
             try:
                 stock_df = ak.stock_zh_a_hist(symbol=ticker, start_date=s_str, end_date=e_str, adjust="qfq")
                 stock_df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume'}, inplace=True)
@@ -160,147 +222,233 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
         return None, None
 
 # ==========================================
-# 3. 主程序
+# 3. 文案内容 (新手指南 & 策略解释)
+# ==========================================
+def show_user_guide():
+    st.markdown("""
+    ### 🚀 新手快速入门指南
+    
+    欢迎来到 **Quant Pro**。这是一个模仿专业机构的量化回测沙箱。请按照以下步骤操作：
+
+    #### 第一步：选择战场 (Market)
+    *   在左侧侧边栏选择 **数据来源**。
+    *   **美股**: 输入代码如 `AAPL` (苹果), `NVDA` (英伟达), `BTC-USD` (比特币)。
+    *   **A股**: 输入6位数字代码，如 `600519` (茅台), `300750` (宁德时代)。
+
+    #### 第二步：挑选武器 (Strategy)
+    *   在 **模型** 下拉框中选择一个策略。
+    *   *不知道选哪个？请点击上方的“🧠 策略百科”标签页学习。*
+
+    #### 第三步：设置防线 (Risk Control)
+    *   展开 **🛡️ 风控** 面板。
+    *   **止损 (Stop Loss)**: 建议设置为 5%-10%。这是你的保命线。
+    *   **止盈 (Take Profit)**: 建议设置为 10%-20%。这是你的落袋线。
+
+    #### 第四步：解读战报 (Analysis)
+    *   点击 **🚀 运行回测**。
+    *   **Alpha**: 如果是正数，说明你跑赢了大盘（真本事）。
+    *   **Sharpe**: 如果大于 1.0，说明策略性价比不错。
+    *   **QuantStats 报告**: 在“📑 专业报告”中查看月度热力图，看看哪个月最赚钱。
+    """)
+
+def show_strategy_wiki():
+    st.markdown("""
+    ### 🧠 量化策略百科全书
+
+    #### 1. SMA 双均线策略 (Trend Following)
+    *   **原理**: "金叉买，死叉卖"。利用短期趋势和长期趋势的交叉来判断方向。
+    *   **适用**: 趋势明显的牛市或熊市。
+    *   **缺点**: 在震荡市（横盘）中会频繁打脸，导致不断止损。
+    
+    #### 2. RSI 相对强弱策略 (Mean Reversion)
+    *   **原理**: "物极必反"。RSI < 30 认为超卖（太便宜了，买！），RSI > 70 认为超买（太贵了，卖！）。
+    *   **适用**: 震荡市，箱体波动。
+    *   **缺点**: 在单边暴涨行情中，RSI 会一直钝化在超买区，导致过早卖出踏空。
+
+    #### 3. MACD 指数平滑策略 (Momentum)
+    *   **原理**: "指标之王"。结合了动量和趋势。快线(DIF)上穿慢线(DEA)为买入信号。
+    *   **适用**: 捕捉中长期的趋势反转点。
+    *   **缺点**: 信号有滞后性，通常行情走了一段才发出信号。
+
+    #### 4. Bollinger 布林带策略 (Volatility)
+    *   **原理**: 价格总是围绕均线波动。跌破下轨认为被低估，突破上轨认为被高估。
+    *   **适用**: 寻找价格的极端位置进行反向操作。
+    
+    #### 5. Momentum 动量策略 (Inertia)
+    *   **原理**: "强者恒强"。如果过去N天涨得好，假设未来还会涨。
+    *   **适用**: 热门股、妖股。
+    """)
+
+# ==========================================
+# 4. 主程序
 # ==========================================
 def main():
-    st.set_page_config(page_title="Quant Pro 专业版", layout="wide", page_icon="📈")
-    st.title("📈 Quant Pro 量化系统 (V1.3 专业版)")
+    st.set_page_config(page_title="Quant Pro AI", layout="wide", page_icon="⚡")
+    
+    # 注入 BigQuant 风格 CSS
+    inject_custom_css()
+
+    st.title("⚡ Quant Pro AI 量化平台")
+    st.caption("Professional Quantitative Trading System | Powered by Backtrader & QuantStats")
 
     # --- 侧边栏 ---
     with st.sidebar:
-        st.header("🎛️ 设置")
-        data_source = st.selectbox("市场", ["美股/港股 (Yahoo)", "A股 (AkShare)"])
+        st.header("🎛️ 控制台 (Control)")
         
+        st.subheader("1. 市场数据")
+        data_source = st.selectbox("数据源", ["美股/港股 (Yahoo)", "A股 (AkShare)"])
         if data_source == "美股/港股 (Yahoo)":
-            ticker = st.text_input("代码", "AAPL")
-            benchmark_name = "标普500"
+            ticker = st.text_input("代码 (Ticker)", "AAPL")
+            benchmark_name = "S&P 500"
         else:
-            ticker = st.text_input("代码", "600519")
-            benchmark_name = "沪深300"
+            ticker = st.text_input("代码 (Code)", "600519")
+            benchmark_name = "CSI 300"
             
         col1, col2 = st.columns(2)
-        start_date = col1.date_input("开始", datetime.date(2021, 1, 1))
-        end_date = col2.date_input("结束", datetime.date.today())
-        cash = st.number_input("本金", 100000)
+        start_date = col1.date_input("Start", datetime.date(2021, 1, 1))
+        end_date = col2.date_input("End", datetime.date.today())
+        cash = st.number_input("本金 (Cash)", 100000)
 
-        st.subheader("策略")
-        strat_map = {"SMA": "SMA", "RSI": "RSI", "MACD": "MACD", "Bollinger": "Bollinger", "Momentum": "Momentum"}
-        s_name = st.selectbox("模型", list(strat_map.keys()))
+        st.subheader("2. 策略模型")
+        strat_map = {"SMA (双均线)": "SMA", "RSI (相对强弱)": "RSI", "MACD (指数平滑)": "MACD", "Bollinger (布林带)": "Bollinger", "Momentum (动量)": "Momentum"}
+        s_name = st.selectbox("选择模型", list(strat_map.keys()))
         s_code = strat_map[s_name]
 
-        with st.expander("🛡️ 风控", expanded=False):
+        with st.expander("🛡️ 风控参数 (Risk)", expanded=False):
             use_risk = st.checkbox("开启止盈止损", value=True)
-            stop_loss = st.slider("止损%", 1, 20, 5) / 100.0
-            take_profit = st.slider("止盈%", 5, 50, 15) / 100.0
+            stop_loss = st.slider("止损 (Stop Loss)", 1, 20, 5) / 100.0
+            take_profit = st.slider("止盈 (Take Profit)", 5, 50, 15) / 100.0
 
+        # 动态参数
         params = {}
         if s_code == "SMA":
-            params['pfast'] = st.slider("快线", 5, 50, 10)
-            params['pslow'] = st.slider("慢线", 20, 100, 30)
-        # ... 其他参数省略 ...
+            params['pfast'] = st.slider("Fast MA", 5, 50, 10)
+            params['pslow'] = st.slider("Slow MA", 20, 100, 30)
+        elif s_code == "RSI":
+            params['rsi_period'] = st.slider("Period", 5, 30, 14)
+            params['rsi_low'] = st.slider("Low", 10, 40, 30)
+            params['rsi_high'] = st.slider("High", 60, 90, 70)
+        # ... 其他参数省略，逻辑同前 ...
 
-        run_btn = st.button("🚀 运行回测", type="primary")
+        run_btn = st.button("🚀 开始回测 (Run Backtest)", type="primary")
 
-    # --- 主界面 ---
-    # 使用 Tabs 分离基础结果和专业报告
-    tab1, tab2, tab3 = st.tabs(["📊 基础回测", "📑 专业报告 (QuantStats)", "📝 交易日志"])
+    # --- 主界面 Tabs ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 回测看板", "📑 专业报告", "🧠 策略百科", "📖 新手指南"])
 
-    if run_btn:
-        with st.spinner("正在进行量化计算与报告生成..."):
-            # 1. 获取数据
-            df_stock, df_bench = get_data_with_benchmark(data_source, ticker, start_date, end_date)
-            
-            if df_stock is None or df_stock.empty:
-                st.error("数据获取失败")
-                return
-
-            # 2. 运行 Backtrader
-            cerebro = bt.Cerebro()
-            cerebro.adddata(bt.feeds.PandasData(dataname=df_stock))
-            cerebro.addstrategy(MegaStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
-            cerebro.broker.setcash(cash)
-            cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
-            
-            results = cerebro.run()
-            strat = results[0]
-            
-            # 3. 数据处理
-            # 提取策略收益率 (Pandas Series)
-            strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
-            strat_returns.index = pd.to_datetime(strat_returns.index) # 确保索引是时间格式
-            
-            # 提取基准收益率
-            if df_bench is not None and not df_bench.empty and 'close' in df_bench.columns:
-                bench_returns = df_bench['close'].pct_change().fillna(0)
-                bench_returns.index = pd.to_datetime(bench_returns.index)
-                # 对齐时间轴
-                bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
-            else:
-                bench_returns = None
-
-            # --- Tab 1: 基础回测结果 ---
-            with tab1:
-                final_cash = cerebro.broker.getvalue()
-                total_return = (final_cash - cash) / cash
+    # --- Tab 1: 回测看板 ---
+    with tab1:
+        if run_btn:
+            with st.spinner("正在连接量化引擎..."):
+                df_stock, df_bench = get_data_with_benchmark(data_source, ticker, start_date, end_date)
                 
-                c1, c2 = st.columns(2)
-                c1.metric("最终资产", f"${final_cash:,.0f}")
-                c2.metric("总收益率", f"{total_return*100:.2f}%", delta_color="normal" if total_return > 0 else "inverse")
-
-                st.subheader("净值曲线")
-                fig, ax = plt.subplots(figsize=(10, 5))
-                # 计算累计收益
-                cum_strat = (1 + strat_returns).cumprod()
-                ax.plot(cum_strat.index, cum_strat, label="策略")
-                if bench_returns is not None:
-                    cum_bench = (1 + bench_returns).cumprod()
-                    ax.plot(cum_bench.index, cum_bench, label=f"基准 ({benchmark_name})", alpha=0.6, linestyle="--")
-                ax.legend()
-                st.pyplot(fig)
-
-            # --- Tab 2: QuantStats 专业报告 (V1.3 核心) ---
-            with tab2:
-                st.info("💡 提示: 下方报告由 QuantStats 生成，包含华尔街级别的详细指标。")
-                
-                try:
-                    # 使用 QuantStats 生成 HTML 报告
-                    # 注意：Streamlit Cloud 文件系统是临时的，我们生成后读取字符串
-                    report_file = "quantstats_report.html"
-                    
-                    # 生成报告 (suppress_warnings=True 防止 Matplotlib 冲突)
-                    qs.reports.html(
-                        strat_returns, 
-                        benchmark=bench_returns, 
-                        output=report_file, 
-                        title=f"{ticker} 策略分析报告",
-                        download_filename=report_file
-                    )
-                    
-                    # 读取 HTML 内容并渲染
-                    with open(report_file, 'r', encoding='utf-8') as f:
-                        report_html = f.read()
-                    
-                    # 使用 iframe 嵌入显示 (height 设置高一点以便滚动)
-                    components.html(report_html, height=800, scrolling=True)
-                    
-                    # 提供下载按钮
-                    st.download_button(
-                        label="📥 下载完整 HTML 报告",
-                        data=report_html,
-                        file_name=f"quant_report_{ticker}.html",
-                        mime="text/html"
-                    )
-                    
-                except Exception as e:
-                    st.error(f"报告生成失败: {e}")
-                    st.caption("可能是数据太短，或者收益率序列包含太多 NaN。")
-
-            # --- Tab 3: 交易日志 ---
-            with tab3:
-                if strat.log_list:
-                    st.dataframe(pd.DataFrame(strat.log_list, columns=["详情"]), use_container_width=True)
+                if df_stock is None or df_stock.empty:
+                    st.error("❌ 数据获取失败，请检查代码或网络。")
                 else:
-                    st.info("无交易记录")
+                    # 运行回测
+                    cerebro = bt.Cerebro()
+                    cerebro.adddata(bt.feeds.PandasData(dataname=df_stock))
+                    cerebro.addstrategy(MegaStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
+                    cerebro.broker.setcash(cash)
+                    cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
+                    
+                    results = cerebro.run()
+                    strat = results[0]
+                    
+                    # 数据处理
+                    strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
+                    strat_returns.index = pd.to_datetime(strat_returns.index)
+                    
+                    if df_bench is not None and not df_bench.empty and 'close' in df_bench.columns:
+                        bench_returns = df_bench['close'].pct_change().fillna(0)
+                        bench_returns.index = pd.to_datetime(bench_returns.index)
+                        bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
+                    else:
+                        bench_returns = None
+
+                    # 计算指标
+                    final_cash = cerebro.broker.getvalue()
+                    total_return = (final_cash - cash) / cash
+                    
+                    # 1. 核心指标卡片 (BigQuant 风格)
+                    st.markdown("### 核心绩效 (Key Metrics)")
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("最终资产", f"${final_cash:,.0f}")
+                    c2.metric("策略收益", f"{total_return*100:.2f}%", delta_color="normal" if total_return > 0 else "inverse")
+                    
+                    if bench_returns is not None:
+                        bench_total = (1 + bench_returns).cumprod().iloc[-1] - 1
+                        alpha = total_return - bench_total
+                        c3.metric(f"基准收益 ({benchmark_name})", f"{bench_total*100:.2f}%")
+                        c4.metric("Alpha (超额)", f"{alpha*100:.2f}%", delta=f"{alpha*100:.2f}%")
+                    else:
+                        c3.metric("基准收益", "N/A")
+                        c4.metric("Alpha", "N/A")
+
+                    # 2. 净值曲线 (深色模式)
+                    st.markdown("### 净值走势 (Equity Curve)")
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    # 设置背景色
+                    fig.patch.set_facecolor('#0E1117')
+                    ax.set_facecolor('#0E1117')
+                    
+                    cum_strat = (1 + strat_returns).cumprod()
+                    ax.plot(cum_strat.index, cum_strat, label="Strategy", color='#00E676', linewidth=2)
+                    
+                    if bench_returns is not None:
+                        cum_bench = (1 + bench_returns).cumprod()
+                        ax.plot(cum_bench.index, cum_bench, label="Benchmark", color='#58A6FF', linestyle='--', alpha=0.6)
+                        ax.fill_between(cum_strat.index, cum_strat, cum_bench, where=(cum_strat > cum_bench), color='#00E676', alpha=0.1)
+                        ax.fill_between(cum_strat.index, cum_strat, cum_bench, where=(cum_strat <= cum_bench), color='#FF5252', alpha=0.1)
+                    
+                    ax.grid(True, color='#30363D', linestyle='--', alpha=0.5)
+                    ax.tick_params(colors='#8B949E')
+                    ax.legend(facecolor='#161B22', edgecolor='#30363D', labelcolor='#FAFAFA')
+                    st.pyplot(fig)
+
+                    # 3. 交易记录
+                    with st.expander("📝 查看详细交易日志"):
+                        if strat.log_list:
+                            st.dataframe(pd.DataFrame(strat.log_list, columns=["Log"]), use_container_width=True)
+                        else:
+                            st.info("无交易记录")
+                    
+                    # 保存数据给 Tab 2 使用
+                    st.session_state['strat_returns'] = strat_returns
+                    st.session_state['bench_returns'] = bench_returns
+                    st.session_state['ticker'] = ticker
+
+        else:
+            st.info("👈 请在左侧设置参数并点击 '开始回测'")
+
+    # --- Tab 2: 专业报告 ---
+    with tab2:
+        if 'strat_returns' in st.session_state:
+            st.markdown("### 深度量化分析报告 (QuantStats)")
+            st.caption("Generating Wall Street grade report...")
+            try:
+                report_file = "qs_report.html"
+                qs.reports.html(
+                    st.session_state['strat_returns'], 
+                    benchmark=st.session_state['bench_returns'], 
+                    output=report_file, 
+                    title=f"{st.session_state['ticker']} Analysis",
+                    download_filename=report_file
+                )
+                with open(report_file, 'r', encoding='utf-8') as f:
+                    report_html = f.read()
+                components.html(report_html, height=1000, scrolling=True)
+            except Exception as e:
+                st.error(f"报告生成失败: {e}")
+        else:
+            st.warning("请先在 '回测看板' 运行回测。")
+
+    # --- Tab 3: 策略百科 ---
+    with tab3:
+        show_strategy_wiki()
+
+    # --- Tab 4: 新手指南 ---
+    with tab4:
+        show_user_guide()
 
 if __name__ == '__main__':
     main()
