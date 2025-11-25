@@ -1,6 +1,7 @@
 streamlit
 backtrader
-yfinance
+yfinance>=0.2.40
 pandas
 matplotlib
 akshare
+quantstats
