@@ -7,3 +7,4 @@ akshare
 quantstats
 ipython
 seaborn
+requests
