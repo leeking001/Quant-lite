@@ -5,3 +5,5 @@ pandas
 matplotlib
 akshare
 quantstats
+ipython
+seaborn
