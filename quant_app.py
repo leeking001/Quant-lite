@@ -7,9 +7,12 @@ import numpy as np
 import time
 import quantstats as qs
 import streamlit.components.v1 as components
+import os
+import requests # 用于下载字体
+from matplotlib import font_manager
 
 # ==========================================
-# 0. 系统配置 (回归浅色清爽风格)
+# 0. 系统配置 (中文乱码修复版)
 # ==========================================
 import matplotlib
 matplotlib.use('Agg') 
@@ -20,8 +23,36 @@ import matplotlib.dates
 if not hasattr(matplotlib.dates, 'warnings'):
     matplotlib.dates.warnings = warnings
 
-# 使用 Seaborn 浅色风格，清晰、专业、适合阅读
+# 1. 先设置绘图风格
 plt.style.use('seaborn-v0_8') 
+
+# 2. 核心修复：自动下载并加载中文字体
+def init_chinese_font():
+    # 字体文件名
+    font_name = "SimHei.ttf"
+    # 字体下载地址 (使用 GitHub 镜像或稳定源)
+    font_url = "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf"
+    
+    # 如果字体文件不存在，则下载
+    if not os.path.exists(font_name):
+        with st.spinner("正在初始化中文字体，初次运行可能需要几秒钟..."):
+            try:
+                response = requests.get(font_url, timeout=20)
+                with open(font_name, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                st.error(f"字体下载失败，图表中文可能无法显示: {e}")
+    
+    # 注册字体
+    if os.path.exists(font_name):
+        font_manager.fontManager.addfont(font_name)
+        # 设置全局字体
+        plt.rcParams['font.sans-serif'] = ['SimHei'] # 指定黑体
+        plt.rcParams['font.family'] = ['sans-serif']
+        plt.rcParams['axes.unicode_minus'] = False   # 解决负号显示为方块的问题
+
+# 执行字体初始化
+init_chinese_font()
 
 import backtrader as bt
 
@@ -158,7 +189,7 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
         return None, None
 
 # ==========================================
-# 3. 文案内容 (大白话版)
+# 3. 文案内容
 # ==========================================
 def show_user_guide():
     st.markdown("""
@@ -215,7 +246,7 @@ def main():
     st.title("🌱 个人量化回测系统 (新手友好版)")
     st.caption("不用懂代码，像玩游戏一样测试你的炒股策略")
 
-    # --- 侧边栏 (带详细解释) ---
+    # --- 侧边栏 ---
     with st.sidebar:
         st.header("🎛️ 操作面板")
         
@@ -250,7 +281,7 @@ def main():
             stop_loss = st.slider("止损线 (跌多少卖)", 1, 20, 5, help="如果亏了 5%，系统自动帮你卖出，防止亏更多。") / 100.0
             take_profit = st.slider("止盈线 (涨多少卖)", 5, 50, 15, help="如果赚了 15%，系统自动帮你卖出，落袋为安。") / 100.0
 
-        # 动态参数 (带解释)
+        # 动态参数
         params = {}
         if s_code == "SMA":
             st.info("💡 双均线：短线穿长线就买。")
@@ -304,9 +335,8 @@ def main():
                     final_cash = cerebro.broker.getvalue()
                     total_return = (final_cash - cash) / cash
                     max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
-                    sharpe = strat.analyzers.sharpe.get_analysis().get('sharperatio')
                     
-                    # 1. 核心指标卡片 (带解释)
+                    # 1. 核心指标卡片
                     st.subheader("核心成绩单")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("最终资产", f"${final_cash:,.0f}", help="你的本金 + 赚的钱")
@@ -359,7 +389,6 @@ def main():
             st.markdown("### 深度体检报告")
             st.caption("这份报告由 QuantStats 生成，包含了华尔街基金经理看的所有指标。")
             try:
-                # 因为现在是浅色模式，直接生成即可，不需要切换背景色
                 report_file = "qs_report.html"
                 qs.reports.html(
                     st.session_state['strat_returns'], 
