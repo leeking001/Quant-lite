@@ -4,26 +4,21 @@ import pandas as pd
 import yfinance as yf
 
 # ==========================================
-# 0. 关键修复 (必须放在 import backtrader 之前)
+# 0. 兼容性补丁 (必须保留)
 # ==========================================
 import matplotlib
-# 设置后端，防止在云端报错
 matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import warnings
-
-# --- 核心修复补丁 ---
-# Backtrader 试图访问 matplotlib.dates.warnings，但在新版 Matplotlib 中已被移除
-# 我们手动把标准库的 warnings 模块赋值给它，解决 AttributeError
 import matplotlib.dates
+# 修复 Backtrader 报错 AttributeError: module 'matplotlib.dates' has no attribute 'warnings'
 if not hasattr(matplotlib.dates, 'warnings'):
     matplotlib.dates.warnings = warnings
-# ------------------
 
 import backtrader as bt
 
 # ==========================================
-# 1. 策略类定义 (Strategy)
+# 1. 策略类定义
 # ==========================================
 class SmaCross(bt.Strategy):
     params = (
@@ -66,7 +61,7 @@ class SmaCross(bt.Strategy):
 # ==========================================
 def main():
     st.set_page_config(page_title="个人量化回测系统", layout="wide")
-    st.title("📈 个人量化交易系统 (修复版)")
+    st.title("📈 个人量化交易系统 (最终修复版)")
 
     st.sidebar.header("⚙️ 参数设置")
     ticker = st.sidebar.text_input("股票代码", "AAPL")
@@ -84,13 +79,31 @@ def main():
         cerebro.addstrategy(SmaCross, pfast=pfast, pslow=pslow)
 
         try:
-            # 强制关闭进度条，防止多线程报错
-            data = bt.feeds.PandasData(
-                dataname=yf.download(ticker, start=start_date, end=end_date, progress=False)
-            )
+            # --- 核心修复：数据下载与清洗 ---
+            # 1. 下载数据
+            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            
+            # 2. 检查数据是否为空
+            if df.empty:
+                st.error("未获取到数据，请检查股票代码或日期范围。")
+                return
+
+            # 3. 扁平化列名 (解决 AttributeError 关键步骤)
+            # 如果 yfinance 返回的是 MultiIndex (例如: ('Close', 'AAPL')), 我们只取第一层 'Close'
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # 4. 确保数据包含 Backtrader 需要的列
+            # 有时候 yfinance 的列名首字母可能不一致，这里不做强制转换，Backtrader 通常能识别 'Close', 'Open' 等
+            
+            data = bt.feeds.PandasData(dataname=df)
             cerebro.adddata(data)
+            # -----------------------------
+
         except Exception as e:
-            st.error(f"数据下载错误: {e}")
+            st.error(f"数据处理错误: {e}")
+            # 打印详细错误以便调试
+            st.write(e)
             return
 
         cerebro.broker.setcash(start_cash)
@@ -109,7 +122,6 @@ def main():
         # 绘图
         st.subheader("策略图表")
         try:
-            # 这里的 volume=False 是为了减少绘图元素，降低报错概率
             figs = cerebro.plot(style='candlestick', volume=False)
             if figs and len(figs) > 0:
                 fig = figs[0][0]
