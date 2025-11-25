@@ -3,3 +3,4 @@ backtrader
 yfinance
 pandas
 matplotlib
+akshare
