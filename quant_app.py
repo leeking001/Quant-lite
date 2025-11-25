@@ -22,7 +22,7 @@ plt.style.use('bmh')
 import backtrader as bt
 
 # ==========================================
-# 1. 策略类 (保持 V1.1 风控版逻辑)
+# 1. 策略类 (保持不变)
 # ==========================================
 class MegaStrategy(bt.Strategy):
     params = (
@@ -96,7 +96,7 @@ class MegaStrategy(bt.Strategy):
             elif self.params.strategy_type == 'Momentum' and self.mom < 0: self.sell()
 
 # ==========================================
-# 2. 数据获取 (新增基准指数获取)
+# 2. 数据获取 (修复版：强制小写列名)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_data_with_benchmark(source, ticker, start_date, end_date):
@@ -109,12 +109,16 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
             stock_df = yf.download(ticker, start=start_date, end=end_date, progress=False)
             if isinstance(stock_df.columns, pd.MultiIndex):
                 stock_df.columns = stock_df.columns.get_level_values(0)
+            # 修复：强制转小写 ('Close' -> 'close')
+            stock_df.columns = stock_df.columns.str.lower()
             
             # 2. 获取基准 (标普500)
             bench_ticker = "^GSPC" 
             bench_df = yf.download(bench_ticker, start=start_date, end=end_date, progress=False)
             if isinstance(bench_df.columns, pd.MultiIndex):
                 bench_df.columns = bench_df.columns.get_level_values(0)
+            # 修复：强制转小写
+            bench_df.columns = bench_df.columns.str.lower()
 
         elif source == "A股 (AkShare)":
             s_str = start_date.strftime("%Y%m%d")
@@ -125,14 +129,17 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
             stock_df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume'}, inplace=True)
             stock_df.index = pd.to_datetime(stock_df['date'])
             stock_df = stock_df[['open', 'high', 'low', 'close', 'volume']]
+            # 修复：强制转小写
+            stock_df.columns = stock_df.columns.str.lower()
 
             # 2. 获取基准 (沪深300)
-            # AkShare 指数接口
             bench_df = ak.stock_zh_index_daily(symbol="sh000300")
+            # AkShare 返回的列名通常已经是小写，但为了保险起见
             bench_df.rename(columns={'date': 'date', 'close': 'close'}, inplace=True)
             bench_df.index = pd.to_datetime(bench_df['date'])
-            # 截取对应时间段
             bench_df = bench_df[(bench_df.index >= pd.to_datetime(start_date)) & (bench_df.index <= pd.to_datetime(end_date))]
+            # 修复：强制转小写
+            bench_df.columns = bench_df.columns.str.lower()
 
         return stock_df, bench_df
 
@@ -145,7 +152,7 @@ def get_data_with_benchmark(source, ticker, start_date, end_date):
 # ==========================================
 def main():
     st.set_page_config(page_title="Quant Pro 现实版", layout="wide", page_icon="⚖️")
-    st.title("⚖️ Quant Pro 量化系统 (V1.2 现实版)")
+    st.title("⚖️ Quant Pro 量化系统 (V1.2 修复版)")
 
     # --- 侧边栏 ---
     with st.sidebar:
@@ -179,7 +186,7 @@ def main():
         if s_code == "SMA":
             params['pfast'] = st.slider("快线", 5, 50, 10)
             params['pslow'] = st.slider("慢线", 20, 100, 30)
-        # ... (其他策略参数省略，使用默认值以简化代码长度，实际使用可补全) ...
+        # ... (其他策略参数省略) ...
 
         run_btn = st.button("🚀 运行回测", type="primary")
 
@@ -199,63 +206,53 @@ def main():
             cerebro.addstrategy(MegaStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
             cerebro.broker.setcash(cash)
             
-            # 添加 TimeReturn 分析器，用于提取每日收益率
+            # 添加 TimeReturn 分析器
             cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
             
             results = cerebro.run()
             strat = results[0]
             
             # 3. 数据处理：策略 vs 基准
-            # 提取策略收益率序列
             strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
-            # 计算策略累计收益率 (Cumulative Return)
             strat_cum = (1 + strat_returns).cumprod()
             strat_cum.name = "Strategy"
 
-            # 处理基准数据
-            if df_bench is not None and not df_bench.empty:
-                # 计算基准每日收益率
+            # 处理基准数据 (增加安全性检查)
+            if df_bench is not None and not df_bench.empty and 'close' in df_bench.columns:
+                # 这里的 'close' 现在肯定是小写的，因为我们在 get_data_with_benchmark 里强制转换了
                 bench_returns = df_bench['close'].pct_change().fillna(0)
-                # 截取与策略相同的时间段
                 bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
-                # 计算基准累计收益率
                 bench_cum = (1 + bench_returns).cumprod()
                 bench_cum.name = "Benchmark"
             else:
-                bench_cum = pd.Series(1, index=strat_returns.index) # 如果获取失败，画一条平线
+                st.warning("⚠️ 未能获取基准指数数据，将只显示策略收益。")
+                bench_cum = pd.Series(1, index=strat_returns.index)
 
             # 4. 计算核心指标
             total_return = strat_cum.iloc[-1] - 1
             bench_return = bench_cum.iloc[-1] - 1
-            alpha = total_return - bench_return # 超额收益
+            alpha = total_return - bench_return 
 
             # 5. 展示结果
             st.subheader("📊 现实检验 (Reality Check)")
             
-            # 指标卡片
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("策略总收益", f"{total_return*100:.2f}%")
-            c2.metric(f"基准收益 ({benchmark_name})", f"{bench_return*100:.2f}%", help="如果你什么都不做，直接买指数基金的收益")
+            c2.metric(f"基准收益 ({benchmark_name})", f"{bench_return*100:.2f}%")
             
-            # Alpha 颜色逻辑
             alpha_color = "normal" if alpha > 0 else "inverse"
-            c3.metric("Alpha (超额收益)", f"{alpha*100:.2f}%", delta=f"{alpha*100:.2f}%", delta_color=alpha_color, help="策略收益 - 基准收益。如果是负数，说明你跑输了大盘。")
+            c3.metric("Alpha (超额收益)", f"{alpha*100:.2f}%", delta=f"{alpha*100:.2f}%", delta_color=alpha_color)
             
             final_cash = cerebro.broker.getvalue()
             c4.metric("最终资产", f"${final_cash:,.0f}")
 
-            # 6. 绘制对比图 (Matplotlib)
+            # 6. 绘制对比图
             fig, ax = plt.subplots(figsize=(12, 6))
-            
-            # 绘制策略线 (蓝色)
-            ax.plot(strat_cum.index, strat_cum, label='我的策略 (Strategy)', color='#1f77b4', linewidth=2)
-            
-            # 绘制基准线 (灰色)
+            ax.plot(strat_cum.index, strat_cum, label='我的策略', color='#1f77b4', linewidth=2)
             ax.plot(bench_cum.index, bench_cum, label=f'市场基准 ({benchmark_name})', color='gray', linestyle='--', alpha=0.7)
             
-            # 填充 Alpha 区域
-            ax.fill_between(strat_cum.index, strat_cum, bench_cum, where=(strat_cum > bench_cum), color='green', alpha=0.1, label='跑赢大盘')
-            ax.fill_between(strat_cum.index, strat_cum, bench_cum, where=(strat_cum <= bench_cum), color='red', alpha=0.1, label='跑输大盘')
+            ax.fill_between(strat_cum.index, strat_cum, bench_cum, where=(strat_cum > bench_cum), color='green', alpha=0.1, label='跑赢')
+            ax.fill_between(strat_cum.index, strat_cum, bench_cum, where=(strat_cum <= bench_cum), color='red', alpha=0.1, label='跑输')
 
             ax.set_title("策略净值 vs 市场基准")
             ax.legend()
