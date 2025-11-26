@@ -3,8 +3,9 @@ backtrader
 yfinance>=0.2.40
 pandas
 matplotlib
-akshare
+akshare>=1.10.0
 quantstats
 ipython
 seaborn
 requests
+lxml
