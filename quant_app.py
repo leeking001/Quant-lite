@@ -126,15 +126,17 @@ class PortfolioStrategy(bt.Strategy):
             elif pos and signal_sell: self.close(data=d)
 
 # ==========================================
-# 2. 数据获取
+# 2. 数据获取 (V3.2 修复版：A股双重保险)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_multiple_data(source, tickers_list, start_date, end_date):
     data_dict = {}
     bench_df = pd.DataFrame()
+    
     for ticker in tickers_list:
         ticker = ticker.strip()
         if not ticker: continue
+
         try:
             if source == "美股/港股":
                 df = yf.download(ticker, start=start_date, end=end_date, progress=False, timeout=10)
