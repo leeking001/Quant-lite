@@ -42,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎 (回测用)
+# 1. 策略引擎
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -227,11 +227,9 @@ def show_manual():
     *   **🚀 策略回测 (看录像)**：
         *   **模式**：一键跑完过去3年的所有行情。
         *   **作用**：快速验证策略是否靠谱，筛选出赚钱的参数。
-        *   **比喻**：像是在看一场已经踢完的球赛录像，分析哪里踢得好。
-    *   **🤖 实战演练 (打模拟赛)**：
-        *   **模式**：把未来的K线遮住，一天一天地走。
-        *   **作用**：让你看着策略在“当下”是如何买卖的，验证你是否能忍受中间的波动。
-        *   **比喻**：像是亲自上场踢球，你不知道下一秒对方会怎么传球。
+    *   **🔮 未来沙盘 (平行宇宙)**：
+        *   **模式**：**从今天开始**，系统根据这只股票的历史脾气（波动率），**随机生成**未来的走势。
+        *   **作用**：测试你的策略在“未知未来”中的表现。你可以点“重新生成”，看看在100种不同的未来里，你的策略能活下来几次。
 
     #### 3. 快速上手三步走
     *   **第一步：选战场 (市场)**: A股(茅台) / 美股(苹果)。
@@ -263,21 +261,55 @@ def show_wiki():
     """)
 
 # ==========================================
-# 5. 模拟实战逻辑 (V4.2 全策略支持版)
+# 5. 未来沙盘推演逻辑 (V5.0 核心)
 # ==========================================
+def generate_future_data(df, days=180):
+    """基于历史波动率生成未来数据 (蒙特卡洛)"""
+    last_date = df.index[-1]
+    last_price = df['close'].iloc[-1]
+    
+    # 计算历史日收益率的均值和标准差
+    returns = df['close'].pct_change().dropna()
+    mu = returns.mean()
+    sigma = returns.std()
+    
+    # 生成未来随机收益率
+    future_returns = np.random.normal(mu, sigma, days)
+    
+    # 推算未来价格
+    future_prices = [last_price]
+    for r in future_returns:
+        future_prices.append(future_prices[-1] * (1 + r))
+    future_prices = future_prices[1:]
+    
+    # 生成未来日期 (工作日)
+    future_dates = pd.bdate_range(start=last_date + datetime.timedelta(days=1), periods=days)
+    
+    # 构建 DataFrame
+    future_df = pd.DataFrame(index=future_dates)
+    future_df['close'] = future_prices
+    # 简化处理：未来数据的开高低收暂且设为相同，主要测试趋势
+    future_df['open'] = future_prices
+    future_df['high'] = future_prices
+    future_df['low'] = future_prices
+    future_df['volume'] = df['volume'].mean() # 假设成交量为平均值
+    
+    return future_df
+
 def init_sim_session():
     if 'sim_step' not in st.session_state:
-        st.session_state.sim_step = 50 
+        st.session_state.sim_step = 0
         st.session_state.sim_cash = 100000
         st.session_state.sim_shares = 0
         st.session_state.sim_history = []
-        st.session_state.sim_data = None
+        st.session_state.sim_data = None # 包含历史+未来
+        st.session_state.sim_split_idx = 0 # 历史和未来的分界点
         st.session_state.sim_indicators = None
 
 def calculate_sim_indicators(df, strategy_name, params):
-    """为模拟盘预计算指标 (Pandas版)"""
+    """计算指标"""
     inds = pd.DataFrame(index=df.index)
-    inds['signal'] = 0 # 1=买, -1=卖
+    inds['signal'] = 0 
     
     try:
         if strategy_name == "双均线 (趋势策略)":
@@ -306,7 +338,6 @@ def calculate_sim_indicators(df, strategy_name, params):
             inds.loc[df['close'] > inds['top'], 'signal'] = -1
             
         elif strategy_name == "海龟交易 (突破策略)":
-            # 过去N天的最高/最低 (不含今天，防止未来函数)
             inds['high'] = df['high'].shift(1).rolling(params['turtle_period']).max()
             inds['low'] = df['low'].shift(1).rolling(params['turtle_period']).min()
             inds.loc[df['close'] > inds['high'], 'signal'] = 1
@@ -315,17 +346,15 @@ def calculate_sim_indicators(df, strategy_name, params):
         elif strategy_name == "均值回归 (抄底策略)":
             inds['sma'] = df['close'].rolling(params['mean_period']).mean()
             inds['dist'] = (df['close'] - inds['sma']) / inds['sma']
-            inds.loc[inds['dist'] < -0.05, 'signal'] = 1 # 偏离-5%买入
-            inds.loc[df['close'] >= inds['sma'], 'signal'] = -1 # 回归均线卖出
+            inds.loc[inds['dist'] < -0.05, 'signal'] = 1 
+            inds.loc[df['close'] >= inds['sma'], 'signal'] = -1 
             
         elif strategy_name == "🛠️ 自定义策略":
-            # 解析自定义参数
             p_ind = params['builder_indicator']
             p_op = params['builder_operator']
             p_thres = params['builder_threshold']
             p_val = params['builder_param']
             
-            # 1. 左边
             if p_ind == 'RSI':
                 delta = df['close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -335,41 +364,34 @@ def calculate_sim_indicators(df, strategy_name, params):
             else:
                 left_series = df['close']
             
-            # 2. 右边
             if p_thres == 'SMA':
                 right_series = df['close'].rolling(int(p_val)).mean()
             else:
                 right_series = float(p_val)
             
-            # 3. 比较
-            if p_op == '>':
-                cond = left_series > right_series
-            else:
-                cond = left_series < right_series
+            if p_op == '>': cond = left_series > right_series
+            else: cond = left_series < right_series
                 
-            # 简单的信号生成：满足条件买，不满足卖
             inds.loc[cond, 'signal'] = 1
             inds.loc[~cond, 'signal'] = -1
             
-    except Exception as e:
-        st.error(f"指标计算错误: {e}")
-        
+    except: pass
     return inds
 
 def run_simulation_tab():
-    st.info("🤖 **策略实战演练**：看着策略自动交易，验证它的靠谱程度！")
+    st.info("🔮 **未来沙盘推演**：基于历史波动，随机生成未来行情，测试策略在平行宇宙中的表现！")
     
     c1, c2 = st.columns([1, 1])
-    with c1: sim_ticker = st.text_input("演练代码", "601360")
+    with c1: sim_ticker = st.text_input("推演代码", "601360")
     with c2: 
-        sim_strat = st.selectbox("演练策略", [
+        sim_strat = st.selectbox("推演策略", [
             "双均线 (趋势策略)", "RSI (反转策略)", "布林带 (通道策略)", 
             "海龟交易 (突破策略)", "均值回归 (抄底策略)", "🛠️ 自定义策略"
         ])
     
-    # --- 演练参数配置 (与回测保持一致) ---
+    # --- 参数配置 ---
     sim_params = {}
-    with st.expander("⚙️ 演练参数设置 (影响买卖点)", expanded=False):
+    with st.expander("⚙️ 策略参数设置", expanded=False):
         if sim_strat == "双均线 (趋势策略)":
             sim_params['pfast'] = st.slider("快线", 5, 30, 10, key='s_pfast')
             sim_params['pslow'] = st.slider("慢线", 20, 60, 30, key='s_pslow')
@@ -396,13 +418,26 @@ def run_simulation_tab():
                 sim_params['builder_param'] = st.number_input("参数值", 0, 10000, 20, key='s_bval')
             sim_params['builder_operator'] = '>' if '>' in sim_params['builder_operator'] else '<'
 
-    if st.button("🔄 重置/开始演练"):
-        with st.spinner("准备数据..."):
-            data_dict, _ = get_multiple_data("A股", [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
-            if sim_ticker in data_dict:
-                st.session_state.sim_data = data_dict[sim_ticker]
-                st.session_state.sim_indicators = calculate_sim_indicators(st.session_state.sim_data, sim_strat, sim_params)
-                st.session_state.sim_step = 50
+    if st.button("🎲 生成未来沙盘 / 重置"):
+        with st.spinner("正在连接平行宇宙..."):
+            # 1. 获取历史数据 (过去1年)
+            hist_data, _ = get_multiple_data("A股", [sim_ticker], datetime.date.today() - datetime.timedelta(days=365), datetime.date.today())
+            
+            if sim_ticker in hist_data:
+                history_df = hist_data[sim_ticker]
+                
+                # 2. 生成未来数据 (180天)
+                future_df = generate_future_data(history_df, days=180)
+                
+                # 3. 合并数据
+                full_df = pd.concat([history_df, future_df])
+                
+                st.session_state.sim_data = full_df
+                st.session_state.sim_split_idx = len(history_df) # 记录分界点
+                st.session_state.sim_indicators = calculate_sim_indicators(full_df, sim_strat, sim_params)
+                
+                # 4. 初始化状态 (从未来第1天开始)
+                st.session_state.sim_step = len(history_df) 
                 st.session_state.sim_cash = 100000
                 st.session_state.sim_shares = 0
                 st.session_state.sim_history = []
@@ -412,9 +447,10 @@ def run_simulation_tab():
         df = st.session_state.sim_data
         inds = st.session_state.sim_indicators
         step = st.session_state.sim_step
+        split_idx = st.session_state.sim_split_idx
         
         if step >= len(df):
-            st.success("演练结束！")
+            st.success("推演结束！")
             return
 
         curr_date = df.index[step]
@@ -422,18 +458,19 @@ def run_simulation_tab():
         signal = inds['signal'].iloc[step]
         action_msg = ""
         
+        # 自动交易逻辑
         if signal == 1 and st.session_state.sim_shares == 0:
             cost = st.session_state.sim_cash * 0.95
             shares = int(cost / curr_price)
             st.session_state.sim_shares = shares
             st.session_state.sim_cash -= shares * curr_price
-            st.session_state.sim_history.append(f"🟢 {curr_date.date()} [策略买入] {shares}股 @ {curr_price:.2f}")
-            action_msg = "🟢 策略触发买入信号，已自动执行！"
+            st.session_state.sim_history.append(f"🟢 {curr_date.date()} [买入] {shares}股 @ {curr_price:.2f}")
+            action_msg = "🟢 策略触发买入！"
         elif signal == -1 and st.session_state.sim_shares > 0:
             st.session_state.sim_cash += st.session_state.sim_shares * curr_price
-            st.session_state.sim_history.append(f"🔴 {curr_date.date()} [策略卖出] {st.session_state.sim_shares}股 @ {curr_price:.2f}")
+            st.session_state.sim_history.append(f"🔴 {curr_date.date()} [卖出] {st.session_state.sim_shares}股 @ {curr_price:.2f}")
             st.session_state.sim_shares = 0
-            action_msg = "🔴 策略触发卖出信号，已自动执行！"
+            action_msg = "🔴 策略触发卖出！"
 
         total_asset = st.session_state.sim_cash + st.session_state.sim_shares * curr_price
         pnl = (total_asset - 100000) / 100000
@@ -441,28 +478,38 @@ def run_simulation_tab():
         if action_msg: st.toast(action_msg, icon="🤖")
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("当前日期", curr_date.strftime("%Y-%m-%d"))
+        m1.metric("推演日期", curr_date.strftime("%Y-%m-%d"))
         m2.metric("当前价格", f"{curr_price:.2f}")
         m3.metric("总资产", f"{total_asset:.0f}", f"{pnl*100:.2f}%")
 
-        show_df = df.iloc[step-50:step+1]
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(show_df.index, show_df['close'], label='Price')
+        # 绘图 (区分历史和未来)
+        # 显示范围：历史最后50天 + 未来已走过的天数
+        start_plot = max(0, split_idx - 50)
+        show_df = df.iloc[start_plot:step+1]
         
-        # 简单的可视化辅助
+        fig, ax = plt.subplots(figsize=(10, 4))
+        
+        # 画历史部分 (黑色)
+        hist_part = show_df[show_df.index <= df.index[split_idx-1]]
+        ax.plot(hist_part.index, hist_part['close'], label='真实历史', color='black')
+        
+        # 画未来部分 (蓝色虚线)
+        future_part = show_df[show_df.index >= df.index[split_idx-1]]
+        if not future_part.empty:
+            ax.plot(future_part.index, future_part['close'], label='虚拟未来', color='blue', linestyle='--')
+            
+        # 画指标
         if "fast" in inds.columns:
-            ax.plot(show_df.index, inds['fast'].iloc[step-50:step+1], label='Fast', linestyle='--')
-            ax.plot(show_df.index, inds['slow'].iloc[step-50:step+1], label='Slow', linestyle='--')
-        elif "top" in inds.columns:
-            ax.plot(show_df.index, inds['top'].iloc[step-50:step+1], label='Top', linestyle=':', alpha=0.5)
-            ax.plot(show_df.index, inds['bot'].iloc[step-50:step+1], label='Bot', linestyle=':', alpha=0.5)
+            ax.plot(show_df.index, inds['fast'].iloc[start_plot:step+1], label='快线', linestyle=':', alpha=0.5)
+            ax.plot(show_df.index, inds['slow'].iloc[start_plot:step+1], label='慢线', linestyle=':', alpha=0.5)
             
         ax.legend()
+        ax.set_title("沙盘推演：历史 vs 未来")
         st.pyplot(fig)
 
         c_next, c_auto = st.columns(2)
         with c_next:
-            if st.button("⏭️ 下一天 (单步)"):
+            if st.button("⏭️ 下一天"):
                 st.session_state.sim_step += 1
                 st.rerun()
         with c_auto:
@@ -470,7 +517,7 @@ def run_simulation_tab():
                 st.session_state.sim_step += 7
                 st.rerun()
         
-        with st.expander("📜 自动交易记录", expanded=True):
+        with st.expander("📜 交易记录", expanded=True):
             for h in reversed(st.session_state.sim_history):
                 st.text(h)
 
@@ -483,7 +530,7 @@ def main():
     
     init_sim_session()
 
-    tab_sim, tab_game, tab_manual, tab_wiki = st.tabs(["🚀 策略回测", "🤖 策略实战演练", "📘 新手手册", "🧠 策略百科"])
+    tab_sim, tab_game, tab_manual, tab_wiki = st.tabs(["🚀 策略回测", "🔮 未来沙盘", "📘 新手手册", "🧠 策略百科"])
 
     with tab_manual: show_manual()
     with tab_wiki: show_wiki()
