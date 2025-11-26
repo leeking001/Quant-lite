@@ -89,7 +89,6 @@ class PortfolioStrategy(bt.Strategy):
             if len(d) < self.params.pslow: continue
             pos = self.getposition(d).size
             
-            # 风控
             if pos != 0 and self.params.use_risk_mgmt:
                 buy_price = self.getposition(d).price
                 if buy_price > 0:
@@ -97,7 +96,6 @@ class PortfolioStrategy(bt.Strategy):
                     if pnl_pct <= -self.params.stop_loss: self.close(data=d); continue 
                     if pnl_pct >= self.params.take_profit: self.close(data=d); continue
 
-            # 策略逻辑
             signal_buy = False
             signal_sell = False
             try:
@@ -165,69 +163,36 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     return data_dict, bench_df
 
 # ==========================================
-# 3. 文案内容 (全中文优化)
+# 3. 文案内容
 # ==========================================
 def show_manual():
     st.markdown("""
     ### 📘 新手保姆级手册
-
-    #### 1. 这个模拟器是干什么的？(原理揭秘)
-    想象你有一台**时光机**。
-    *   你带着 **10万块钱** 回到了 **2021年**。
-    *   你严格按照一个规则（比如“金叉买死叉卖”）去炒股，绝不手软。
-    *   模拟器就是帮你算出：**如果你真的这么做了，今天你手里会有多少钱？**
-    *   这叫**“回测” (Backtest)**。如果一个策略在过去3年都亏钱，你敢拿它去炒明天的股吗？
-
-    #### 2. 快速上手三步走
-    *   **第一步：选战场**
-        *   **A股**: 玩茅台、宁德时代。输入6位数字代码 (如 `600519`)。
-        *   **美股**: 玩苹果、特斯拉。输入字母代码 (如 `AAPL`)。
-    *   **第二步：选武器 (策略)**
-        *   **双均线**: 最简单的趋势策略，适合大牛市。
-        *   **布林带**: 适合震荡市，高抛低吸。
-        *   **策略工厂**: 自己用积木搭建逻辑，比如“收盘价 > 20日均线就买”。
-    *   **第三步：设防线 (风控)**
-        *   **止损 (Stop Loss)**: 比如设 5%。买入后如果跌了 5%，系统强制卖出。**这是保命符！**
-        *   **止盈 (Take Profit)**: 比如设 15%。赚够了就跑。
-
-    #### 3. 量化黑话词典
-    *   **Alpha (阿尔法)**: 你比大盘多赚的钱。正数代表你牛，负数代表你菜。
-    *   **Beta (贝塔)**: 随大流赚的钱。牛市来了大家都赚钱，这就是 Beta。
-    *   **夏普比率 (Sharpe)**: 性价比。每承担一份风险，能赚多少钱。**大于 1.0 算不错**。
-    *   **最大回撤 (Drawdown)**: 历史上最倒霉的时候，从最高点跌下来跌了多少。**越小越好**。
+    **第一步：准备工作**
+    1.  **选市场**: 玩茅台选 **A股**，玩苹果/特斯拉选 **美股/港股**。
+    2.  **输代码**: A股输数字(如600519)，美股输字母(如AAPL)。支持多只，逗号隔开。
+    3.  **本金**: 建议填 **100,000** 以上。
+    **第二步：选择策略**
+    *   **稳健型**: 推荐 **双均线 (SMA)** 或 **布林带**。
+    *   **激进型**: 推荐 **海龟交易** 或 **RSI**。
+    **第三步：风控 (必看!)**
+    *   **止损**: 建议 **5%**。
+    *   **止盈**: 建议 **15%**。
     """)
 
 def show_wiki():
     st.markdown("""
     ### 🧠 策略百科全书
-
     #### 1. 双均线 (SMA Cross)
-    *   **一句话**: "金叉买，死叉卖"。
-    *   **原理**: 有两根线，一根快（反应灵敏），一根慢（反应迟钝）。当快线向上穿过慢线，说明涨势确立，买入。
-    *   **适合**: **大牛市、大熊市**（单边行情）。
-    *   **缺点**: **震荡市**。股价横盘时，两根线会反复纠缠，导致你频繁买卖，把本金亏在手续费上。
-
-    #### 2. RSI (相对强弱指标)
-    *   **一句话**: "物极必反"。
-    *   **原理**: 给市场情绪打分（0-100）。低于30分说明大家恐慌过度（超卖），是抄底机会；高于70分说明大家狂热过度（超买），是逃顶机会。
-    *   **适合**: **震荡市**（箱体波动）。
-    *   **缺点**: **大牛市**。牛市里 RSI 会一直很高，如果你卖了，就踏空了后面的大涨。
-
-    #### 3. 布林带 (Bollinger Bands)
-    *   **一句话**: "回归中枢"。
-    *   **原理**: 股价通常在一条“通道”里运行。跌破下轨说明被低估，买入；突破上轨说明被高估，卖出。
-    *   **适合**: **震荡修复行情**。
-
+    *   **原理**: 快线上穿慢线买入。**适用**: 大趋势。**缺点**: 震荡市亏损。
+    #### 2. RSI (相对强弱)
+    *   **原理**: 低分抄底，高分逃顶。**适用**: 震荡市。**缺点**: 牛市踏空。
+    #### 3. 布林带 (Bollinger)
+    *   **原理**: 跌破下轨买，突破上轨卖。**适用**: 震荡修复。
     #### 4. 海龟交易 (Turtle)
-    *   **一句话**: "追涨杀跌"。
-    *   **原理**: 只要价格突破了过去 N 天的最高价，说明新一轮大趋势开始了，果断追涨，不要怕高。
-    *   **适合**: **大趋势行情**。
-    *   **缺点**: **假突破**。看着突破了，买进去立马回调被套。
-
+    *   **原理**: 突破新高追涨。**适用**: 大牛市。**缺点**: 假突破。
     #### 5. 均值回归 (Mean Reversion)
-    *   **一句话**: "橡皮筋理论"。
-    *   **原理**: 价格拉得离均线太远（比如跌了5%），就像拉紧的橡皮筋，总会弹回来。
-    *   **适合**: **急涨急跌**后的反弹。
+    *   **原理**: 偏离均线太远会回调。**适用**: 急涨急跌。
     """)
 
 # ==========================================
@@ -246,13 +211,13 @@ def main():
         col_input, col_action = st.columns([3, 1])
         with col_input:
             default_tickers = "AAPL, MSFT, NVDA"
-            data_source = st.selectbox("选择市场", ["美股/港股", "A股"])
-            tickers_input = st.text_area("股票代码 (支持多只，用逗号隔开)", value=default_tickers, height=68)
+            data_source = st.selectbox("选择市场", ["美股/港股", "A股"], help="【A股】中国大陆股市，如茅台、宁德时代。\n【美股/港股】美国和香港股市，如苹果、腾讯。")
+            tickers_input = st.text_area("股票代码 (支持多只，用逗号隔开)", value=default_tickers, height=68, help="输入股票代码。\nA股示例：600519, 000858\n美股示例：AAPL, TSLA")
 
         with st.expander("⚙️ 策略与风控配置 (点击展开)", expanded=True):
             c1, c2 = st.columns(2)
-            start_date = c1.date_input("回测开始日期", datetime.date(2021, 1, 1))
-            cash = c2.number_input("初始本金 (元/美元)", 100000, help="建议 10万 以上，防止买不起高价股")
+            start_date = c1.date_input("回测开始日期", datetime.date(2021, 1, 1), help="模拟交易开始的时间。建议至少选1年前，数据太短算不出指标。")
+            cash = c2.number_input("初始本金 (元/美元)", 100000, help="你模拟账户里的初始资金。建议设大一点（如10万），防止买不起一手高价股（如茅台一手要15万）。")
             
             strat_map = {
                 "🛠️ 零代码策略工厂": "Builder",
@@ -262,47 +227,45 @@ def main():
                 "海龟交易 (突破策略)": "Turtle",
                 "均值回归 (抄底策略)": "MeanRev"
             }
-            s_name = st.selectbox("选择策略模型", list(strat_map.keys()))
+            s_name = st.selectbox("选择策略模型", list(strat_map.keys()), help="决定什么时候买、什么时候卖的规则。不知道选哪个？去顶部的【策略百科】看看。")
             s_code = strat_map[s_name]
             
-            # --- 参数汉化区 ---
+            # --- 参数汉化区 (带详细注释) ---
             params = {}
             if s_code == "Builder":
                 st.info("🏗️ **策略工厂**：当 [指标] [比较] [阈值] 时买入")
                 bc1, bc2, bc3, bc4 = st.columns([2, 1, 2, 2])
                 with bc1:
-                    b_ind = st.selectbox("指标", ["收盘价", "RSI"])
+                    b_ind = st.selectbox("指标", ["收盘价", "RSI"], help="作为判断依据的数据。")
                     params['builder_indicator'] = 'RSI' if 'RSI' in b_ind else 'Close'
-                with bc2: params['builder_operator'] = st.selectbox("比较符", ["> (大于)", "< (小于)"])
+                with bc2: params['builder_operator'] = st.selectbox("比较符", ["> (大于)", "< (小于)"], help="判断条件。")
                 with bc3:
-                    b_thres = st.selectbox("阈值类型", ["均线 (SMA)", "固定数值"])
+                    b_thres = st.selectbox("阈值类型", ["均线 (SMA)", "固定数值"], help="和什么进行比较？")
                     params['builder_threshold'] = 'SMA' if 'SMA' in b_thres else 'Value'
                 with bc4:
                     def_val = 20 if params['builder_threshold'] == 'SMA' else (30 if params['builder_indicator'] == 'RSI' else 100)
-                    params['builder_param'] = st.number_input("参数值", 0, 10000, def_val)
-                
-                # 修正比较符传参
+                    params['builder_param'] = st.number_input("参数值", 0, 10000, def_val, help="如果是均线，这里填天数；如果是数值，这里填具体数字。")
                 params['builder_operator'] = '>' if '>' in params['builder_operator'] else '<'
 
             elif s_code == "SMA":
-                params['pfast'] = st.slider("快线周期 (灵敏)", 5, 30, 10)
-                params['pslow'] = st.slider("慢线周期 (稳定)", 20, 60, 30)
+                params['pfast'] = st.slider("快线周期 (灵敏)", 5, 30, 10, help="【灵敏度】数值越小，反应越快，但容易被假动作骗。")
+                params['pslow'] = st.slider("慢线周期 (稳定)", 20, 60, 30, help="【趋势判断】数值越大，代表长期趋势，反应较慢。")
             elif s_code == "RSI":
                 params['rsi_period'] = 14
-                params['rsi_low'] = st.slider("超卖阈值 (买入线)", 10, 40, 30)
-                params['rsi_high'] = st.slider("超买阈值 (卖出线)", 60, 90, 70)
+                params['rsi_low'] = st.slider("超卖阈值 (买入线)", 10, 40, 30, help="【抄底线】低于这个分，说明跌过头了，建议买入。")
+                params['rsi_high'] = st.slider("超买阈值 (卖出线)", 60, 90, 70, help="【逃顶线】高于这个分，说明涨过头了，建议卖出。")
             elif s_code == "Bollinger":
-                params['boll_period'] = st.slider("计算周期", 10, 50, 20)
-                params['boll_dev'] = st.slider("标准差倍数 (通道宽度)", 1.0, 3.0, 2.0)
+                params['boll_period'] = st.slider("计算周期", 10, 50, 20, help="计算中轨均线的天数，一般设20。")
+                params['boll_dev'] = st.slider("标准差倍数 (通道宽度)", 1.0, 3.0, 2.0, help="【通道宽度】数值越大，通道越宽，不容易触发买卖；数值越小，交易越频繁。")
             elif s_code == "Turtle":
-                params['turtle_period'] = st.slider("突破周期 (天)", 10, 60, 20)
+                params['turtle_period'] = st.slider("突破周期 (天)", 10, 60, 20, help="【追涨标准】如果今天的价格超过了过去 N 天的最高价，就买入。")
             elif s_code == "MeanRev":
-                params['mean_period'] = st.slider("均线周期", 10, 50, 20)
+                params['mean_period'] = st.slider("均线周期", 10, 50, 20, help="作为基准的均线天数。")
 
             st.divider()
-            use_risk = st.checkbox("开启自动止盈止损 (推荐)", value=True)
-            stop_loss = st.slider("止损比例 (跌多少卖)", 1, 20, 5) / 100.0
-            take_profit = st.slider("止盈比例 (涨多少卖)", 5, 50, 15) / 100.0
+            use_risk = st.checkbox("开启自动止盈止损 (推荐)", value=True, help="【新手必选】相当于给你的账户买了保险。")
+            stop_loss = st.slider("止损比例 (跌多少卖)", 1, 20, 5, help="【保命线】如果亏损达到这个比例（如5%），系统强制卖出，防止亏光本金。") / 100.0
+            take_profit = st.slider("止盈比例 (涨多少卖)", 5, 50, 15, help="【落袋线】如果盈利达到这个比例（如15%），系统强制卖出，锁定利润。") / 100.0
 
         run_btn = st.button("🚀 开始回测", type="primary", use_container_width=True)
 
@@ -351,9 +314,9 @@ def main():
                                 max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
                                 
                                 c1, c2, c3 = st.columns(3)
-                                c1.metric("最终资产", f"${final_cash/1000:.1f}k")
-                                c2.metric("总收益率", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
-                                c3.metric("最大回撤", f"{max_dd:.1f}%")
+                                c1.metric("最终资产", f"${final_cash/1000:.1f}k", help="回测结束时，你账户里的总钱数（本金+盈亏）。")
+                                c2.metric("总收益率", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse", help="（最终资产 - 初始本金）/ 初始本金。")
+                                c3.metric("最大回撤", f"{max_dd:.1f}%", help="【风险指标】历史上最倒霉的时候，从最高点跌下来跌了多少。数值越小越安全。")
                                 
                                 fig, ax = plt.subplots(figsize=(8, 4))
                                 cum_strat = (1 + strat_returns).cumprod()
@@ -366,15 +329,12 @@ def main():
                                 
                                 with st.expander("📊 详细数据报告 (中文版)"):
                                     try:
-                                        # 1. 获取原始指标表
                                         metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
-                                        
-                                        # 2. 汉化翻译字典
                                         trans_map = {
                                             'Start Period': '开始日期', 'End Period': '结束日期',
                                             'Risk-Free Rate': '无风险利率', 'Time in Market': '持仓时间占比',
                                             'Cumulative Return': '累计收益率', 'CAGR﹪': '年化收益率',
-                                            'Sharpe': '夏普比率 (Sharpe)', 'Prob. Sharpe Ratio': '概率夏普比',
+                                            'Sharpe': '夏普比率', 'Prob. Sharpe Ratio': '概率夏普比',
                                             'Sortino': '索提诺比率', 'Sortino/√2': '索提诺/√2',
                                             'Omega': '欧米伽比率', 'Max Drawdown': '最大回撤',
                                             'Longest DD Days': '最长回撤天数', 'Volatility (ann.)': '年化波动率',
@@ -402,11 +362,19 @@ def main():
                                             'Win Days %%': '盈利天数占比', 'Win Month %%': '盈利月数占比',
                                             'Win Quarter %%': '盈利季度占比', 'Win Year %%': '盈利年份占比'
                                         }
-                                        
-                                        # 3. 应用翻译
                                         metrics_cn = metrics.rename(index=trans_map)
                                         st.dataframe(metrics_cn, use_container_width=True)
                                         
+                                        # 指标说明书
+                                        st.info("""
+                                        **💡 核心指标说明书：**
+                                        *   **夏普比率 (Sharpe)**: 衡量性价比。大于 1.0 优秀，小于 0 说明不如存银行。
+                                        *   **索提诺比率 (Sortino)**: 只看“坏波动”的性价比。比夏普更科学。
+                                        *   **最大回撤 (Max Drawdown)**: 历史上最惨的一次亏损幅度。越小越好。
+                                        *   **年化波动率 (Volatility)**: 资产价格上下跳动的剧烈程度。越小越稳。
+                                        *   **胜率 (Win Days %)**: 赚钱的天数占总天数的比例。
+                                        """)
+
                                         report_file = "qs_report.html"
                                         qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Quant Report", download_filename=report_file)
                                         with open(report_file, 'r', encoding='utf-8') as f:
