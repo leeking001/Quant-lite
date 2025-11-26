@@ -1,7 +1,3 @@
-下面是已整理好的 README.md（Markdown 完整版），我已将你提供的 第一部分 + 第二部分 完整合并、排版优化、结构清晰、可直接作为 GitHub README 使用：
-
-⸻
-
 📈 量化交易模拟器 (Quant Trading Simulator) V5.0
 
 量化交易模拟器 是一个基于 Python 的全功能量化回测与实战演练平台。
@@ -165,14 +161,3 @@ quant-simulator/
 
 Made with ❤️ by Quant Enthusiasts
 量化爱好者共同打造的策略模拟平台。
-
-⸻
-
-如果你需要，我也可以帮你：
-
-✅ 自动生成 GitHub Release 模板
-✅ 为项目生成 Logo / Banner 图（PNG/SVG）
-✅ 生成可部署的 Dockerfile
-✅ 输出一版“V5.0 更新说明”
-
-告诉我下一步需要哪个？
