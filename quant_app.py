@@ -2,7 +2,6 @@ import streamlit as st
 import datetime
 import pandas as pd
 import yfinance as yf
-import akshare as ak
 import numpy as np
 import time
 import quantstats as qs
@@ -43,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎
+# 1. 策略引擎 (保持不变)
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -126,48 +125,69 @@ class PortfolioStrategy(bt.Strategy):
             elif pos and signal_sell: self.close(data=d)
 
 # ==========================================
-# 2. 数据获取 (V3.2 修复版：A股双重保险)
+# 2. 数据获取 (V3.3 终极修复版：Yahoo 智能后缀)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_multiple_data(source, tickers_list, start_date, end_date):
     data_dict = {}
     bench_df = pd.DataFrame()
     
+    # 1. 获取股票数据
     for ticker in tickers_list:
         ticker = ticker.strip()
         if not ticker: continue
+        
+        # --- A股智能后缀处理 ---
+        # 如果用户选了A股，且输入的是纯数字，自动加后缀
+        search_ticker = ticker
+        if source == "A股" and ticker.isdigit():
+            if ticker.startswith('6'):
+                search_ticker = f"{ticker}.SS" # 上海
+            elif ticker.startswith('0') or ticker.startswith('3'):
+                search_ticker = f"{ticker}.SZ" # 深圳
+            elif ticker.startswith('4') or ticker.startswith('8'):
+                search_ticker = f"{ticker}.BJ" # 北京
+        # ---------------------
 
         try:
-            if source == "美股/港股":
-                df = yf.download(ticker, start=start_date, end=end_date, progress=False, timeout=10)
-                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                df.columns = df.columns.str.lower()
-                if not df.empty: data_dict[ticker] = df
-            elif source == "A股":
-                s_str = start_date.strftime("%Y%m%d")
-                e_str = end_date.strftime("%Y%m%d")
-                df = ak.stock_zh_a_hist(symbol=ticker, start_date=s_str, end_date=e_str, adjust="qfq")
-                df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume'}, inplace=True)
-                df.index = pd.to_datetime(df['date'])
-                df = df[['open', 'high', 'low', 'close', 'volume']]
-                df.columns = df.columns.str.lower()
-                if not df.empty: data_dict[ticker] = df
-        except: pass
+            # 统一使用 Yahoo Finance，因为它在云端最稳定
+            df = yf.download(search_ticker, start=start_date, end=end_date, progress=False, timeout=10)
+            
+            # 数据清洗
+            if isinstance(df.columns, pd.MultiIndex): 
+                df.columns = df.columns.get_level_values(0)
+            df.columns = df.columns.str.lower()
+            
+            # 修复时区问题 (Yahoo 返回的是带时区的，Backtrader 不喜欢)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
 
+            if not df.empty: 
+                data_dict[ticker] = df # 存回字典时用原始代码(如600519)做key，方便显示
+        except: 
+            pass
+
+    # 2. 获取基准数据
     try:
-        if source == "美股/港股": bench_df = yf.download("^GSPC", start=start_date, end=end_date, progress=False)
-        else:
-            bench_df = ak.stock_zh_index_daily(symbol="sh000300")
-            bench_df.rename(columns={'date': 'date', 'close': 'close'}, inplace=True)
-            bench_df.index = pd.to_datetime(bench_df['date'])
-            bench_df = bench_df[(bench_df.index >= pd.to_datetime(start_date)) & (bench_df.index <= pd.to_datetime(end_date))]
-        if isinstance(bench_df.columns, pd.MultiIndex): bench_df.columns = bench_df.columns.get_level_values(0)
+        bench_ticker = "^GSPC" # 默认标普500
+        if source == "A股":
+            bench_ticker = "000300.SS" # 沪深300 (Yahoo代码)
+            
+        bench_df = yf.download(bench_ticker, start=start_date, end=end_date, progress=False)
+        
+        if isinstance(bench_df.columns, pd.MultiIndex): 
+            bench_df.columns = bench_df.columns.get_level_values(0)
         bench_df.columns = bench_df.columns.str.lower()
+        
+        if bench_df.index.tz is not None:
+            bench_df.index = bench_df.index.tz_localize(None)
+            
     except: pass
+
     return data_dict, bench_df
 
 # ==========================================
-# 3. 文案内容 (前置)
+# 3. 文案内容
 # ==========================================
 def show_manual():
     st.markdown("""
@@ -175,8 +195,11 @@ def show_manual():
     
     **第一步：准备工作**
     1.  **选市场**: 玩茅台选 **A股**，玩苹果/特斯拉选 **美股/港股**。
-    2.  **输代码**: 支持多只股票！用逗号隔开，例如 `600519, 000858`。
-    3.  **本金**: 建议填 **100,000** 以上，否则可能买不起一手高价股（如茅台）。
+    2.  **输代码**: 
+        *   A股直接输数字，如 `600519`。
+        *   美股输字母，如 `AAPL`。
+        *   支持多只！用逗号隔开，例如 `600519, 000858`。
+    3.  **本金**: 建议填 **100,000** 以上，否则可能买不起一手高价股。
 
     **第二步：选择策略**
     *   **稳健型**: 推荐 **双均线 (SMA)** 或 **布林带**。
@@ -186,7 +209,6 @@ def show_manual():
     **第三步：风控 (必看!)**
     *   **止损**: 亏了多少比例强制卖出。建议 **5%**。
     *   **止盈**: 赚了多少比例强制卖出。建议 **15%**。
-    *   *不设风控就是赌博，设了风控才是交易。*
     """)
 
 def show_wiki():
@@ -225,23 +247,18 @@ def main():
     st.set_page_config(page_title="量化交易模拟器", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
     st.title("📈 量化交易模拟器")
     
-    # --- 顶部导航 Tabs (文档前置) ---
     tab_sim, tab_manual, tab_wiki = st.tabs(["🚀 开始模拟", "📘 新手手册", "🧠 策略百科"])
 
-    # --- Tab 2 & 3: 文档内容 ---
     with tab_manual: show_manual()
     with tab_wiki: show_wiki()
 
-    # --- Tab 1: 模拟器核心 ---
     with tab_sim:
-        # 输入区
         col_input, col_action = st.columns([3, 1])
         with col_input:
             default_tickers = "AAPL, MSFT, NVDA"
             data_source = st.selectbox("市场", ["美股/港股", "A股"])
             tickers_input = st.text_area("股票代码 (用逗号隔开)", value=default_tickers, height=68)
 
-        # 策略配置
         with st.expander("⚙️ 策略与风控配置", expanded=True):
             c1, c2 = st.columns(2)
             start_date = c1.date_input("开始日期", datetime.date(2021, 1, 1))
@@ -258,7 +275,6 @@ def main():
             s_name = st.selectbox("选择策略模型", list(strat_map.keys()))
             s_code = strat_map[s_name]
             
-            # 参数区
             params = {}
             if s_code == "Builder":
                 st.info("🏗️ **策略工厂**：当 [指标] [比较] [阈值] 时买入")
@@ -296,7 +312,6 @@ def main():
 
         run_btn = st.button("🚀 开始回测", type="primary", use_container_width=True)
 
-        # 结果展示
         if run_btn:
             ticker_list = [t.strip() for t in tickers_input.split(',') if t.strip()]
             if not ticker_list: st.error("请输入代码")
@@ -304,7 +319,7 @@ def main():
                 with st.spinner("正在计算..."):
                     data_dict, df_bench = get_multiple_data(data_source, ticker_list, start_date, datetime.date.today())
                     
-                    if not data_dict: st.error("数据获取失败")
+                    if not data_dict: st.error("数据获取失败。如果是A股，请确认代码正确（如 600519）。")
                     else:
                         cerebro = bt.Cerebro()
                         for t, df in data_dict.items():
@@ -346,15 +361,11 @@ def main():
                         ax.legend()
                         st.pyplot(fig)
                         
-                        # --- 手机端报告修复 (使用原生表格替代 HTML iframe) ---
                         with st.expander("📊 详细数据报告 (手机友好版)"):
-                            # 1. 计算核心指标表
                             try:
-                                # 使用 QuantStats 计算指标，但不生成 HTML，而是获取 DataFrame
                                 metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
                                 st.dataframe(metrics, use_container_width=True)
                                 
-                                # 2. 提供完整 HTML 下载 (给电脑端看)
                                 report_file = "qs_report.html"
                                 qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
                                 with open(report_file, 'r', encoding='utf-8') as f:
