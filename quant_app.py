@@ -42,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎
+# 1. 策略引擎 (回测用)
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -163,7 +163,7 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     return data_dict, bench_df
 
 # ==========================================
-# 3. 智能顾问逻辑 (V3.9 新增)
+# 3. 智能顾问逻辑
 # ==========================================
 def generate_strategy_report(ret_pct, max_dd, alpha, sharpe):
     score = 0
@@ -214,89 +214,163 @@ def generate_strategy_report(ret_pct, max_dd, alpha, sharpe):
     return stars, verdict, advice, next_step
 
 # ==========================================
-# 4. 文案内容 (保留 V3.8 详尽版)
+# 4. 文案内容
 # ==========================================
 def show_manual():
     st.markdown("""
     ### 📘 新手保姆级手册 (完整版)
-
     #### 1. 什么是量化回测？(时光机原理)
-    想象你有一台**时光机**。
-    *   你带着 **10万块钱** 回到了 **2021年**。
-    *   你发誓严格执行一个死板的规则（比如“股价站上20日均线就买，跌破就卖”），绝不手软，绝不听小道消息。
-    *   这个模拟器就是帮你算出：**如果你真的这么做了，今天你手里会有多少钱？**
-    *   **意义**：如果一个策略在过去3年都亏得底裤都不剩，你明天还敢用它去炒股吗？
-
+    想象你有一台**时光机**。你带着 **10万块钱** 回到了 **2021年**。你发誓严格执行一个死板的规则，绝不手软。这个模拟器就是帮你算出：**如果你真的这么做了，今天你手里会有多少钱？**
     #### 2. 快速上手三步走
-    *   **第一步：选战场 (市场)**
-        *   **A股**: 玩茅台、宁德时代。输入6位数字代码 (如 `600519`)。
-        *   **美股**: 玩苹果、特斯拉。输入字母代码 (如 `AAPL`)。
-    *   **第二步：选武器 (策略)**
-        *   **小白推荐**: 先用 **双均线 (SMA)**。这是最经典的趋势策略，容易理解。
-        *   **进阶玩家**: 试试 **海龟交易**，这是捕捉大牛股的神器。
-        *   **高玩**: 使用 **自定义策略**，自己拼积木！
-    *   **第三步：设防线 (风控)**
-        *   **止损 (Stop Loss)**: 类似于“保险丝”。比如设 5%，亏了 5% 自动断电（卖出），防止房子烧光（本金亏光）。
-        *   **止盈 (Take Profit)**: 类似于“收网”。赚够了就跑，防止煮熟的鸭子飞了。
-
-    #### 3. 量化黑话词典 (看报告必读)
-    *   **Alpha (阿尔法)**: 你比大盘多赚的钱。正数代表你牛，负数代表你菜。
-    *   **Beta (贝塔)**: 随大流赚的钱。牛市来了大家都赚钱，这就是 Beta。
-    *   **夏普比率 (Sharpe)**: **性价比**。每承担一份风险，能赚多少钱。**大于 1.0 算不错**。
-    *   **最大回撤 (Drawdown)**: **最惨亏损**。历史上从最高点跌下来，最惨的一次跌了多少。**越小越好**。
-    *   **波动率 (Volatility)**: 资产价格上下跳动的剧烈程度。越小越稳。
+    *   **第一步：选战场 (市场)**: A股(茅台) / 美股(苹果)。
+    *   **第二步：选武器 (策略)**: 推荐双均线(稳健)或海龟(激进)。
+    *   **第三步：设防线 (风控)**: 止损(保命) / 止盈(落袋)。
+    #### 3. 量化黑话词典
+    *   **Alpha**: 比大盘多赚的钱。
+    *   **夏普比率**: 性价比。>1.0 算好。
+    *   **最大回撤**: 历史上最惨的一次亏损。
     """)
 
 def show_wiki():
     st.markdown("""
     ### 🧠 策略百科全书
-
     #### 1. 双均线 (SMA Cross)
-    *   **原理**: "金叉买，死叉卖"。快线（如10日）上穿慢线（如30日）买入。
-    *   **适用**: **大趋势行情**。
-    *   **缺点**: 震荡市会频繁打脸亏损。
-
+    *   **原理**: 快线上穿慢线买入。**适用**: 大趋势。**缺点**: 震荡市亏损。
     #### 2. RSI (相对强弱)
-    *   **原理**: "物极必反"。分数低（<30）说明超卖，买入；分数高（>70）说明超买，卖出。
-    *   **适用**: **震荡市**（箱体波动）。
-    *   **缺点**: 大牛市中会过早卖出，踏空后续涨幅。
-
-    #### 3. 布林带 (Bollinger Bands)
-    *   **原理**: "回归中枢"。股价通常在通道内运行。跌破下轨买入，突破上轨卖出。
-    *   **适用**: **震荡修复行情**。
-
+    *   **原理**: 低分抄底，高分逃顶。**适用**: 震荡市。**缺点**: 牛市踏空。
+    #### 3. 布林带 (Bollinger)
+    *   **原理**: 跌破下轨买，突破上轨卖。**适用**: 震荡修复。
     #### 4. 海龟交易 (Turtle)
-    *   **原理**: "追涨杀跌"。突破过去 N 天的最高价，说明新一轮趋势开始了，果断追涨。
-    *   **适用**: **大牛市、大熊市**。
-    *   **缺点**: 假突破。看着突破了，买进去立马回调。
-
+    *   **原理**: 突破新高追涨。**适用**: 大牛市。**缺点**: 假突破。
     #### 5. 均值回归 (Mean Reversion)
-    *   **原理**: "橡皮筋理论"。价格偏离均线太远（如跌了5%），总会弹回来。
-    *   **适用**: **急涨急跌**后的反弹。
-
-    #### 6. 🛠️ 自定义策略 (Custom Builder)
-    *   **玩法**: 像造句一样组合你的交易逻辑。
-    *   **公式**: 当 `[指标]` `[比较符]` `[阈值]` 时 -> **买入** (反之卖出)。
-    *   **例子 A (均线突破)**: 
-        *   设置: `[收盘价]` `[>]` `[均线 (SMA)]` `[20]`
-        *   人话: 只要股价站上 20日均线，就买入持有；跌破就卖出。
-    *   **例子 B (RSI 抄底)**:
-        *   设置: `[RSI]` `[<]` `[固定数值]` `[30]`
-        *   人话: 只要 RSI 指标跌破 30，说明超卖，买入博反弹。
+    *   **原理**: 偏离均线太远会回调。**适用**: 急涨急跌。
     """)
 
 # ==========================================
-# 5. 主程序
+# 5. 模拟操盘逻辑 (V4.0 新增)
+# ==========================================
+def init_sim_session():
+    if 'sim_step' not in st.session_state:
+        st.session_state.sim_step = 50 # 从第50天开始，留出计算指标的时间
+        st.session_state.sim_cash = 100000
+        st.session_state.sim_shares = 0
+        st.session_state.sim_history = []
+        st.session_state.sim_data = None
+
+def run_simulation_tab():
+    st.info("🎮 **模拟操盘训练营**：时光倒流，遮住未来K线，训练你的盘感！")
+    
+    # 1. 设置
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        sim_ticker = st.text_input("训练代码", "600519", help="输入一个你想训练的股票代码")
+    with c2:
+        sim_source = st.selectbox("训练市场", ["A股", "美股/港股"])
+    
+    if st.button("🔄 开始/重置训练"):
+        with st.spinner("正在准备训练数据..."):
+            data_dict, _ = get_multiple_data(sim_source, [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
+            if sim_ticker in data_dict:
+                st.session_state.sim_data = data_dict[sim_ticker]
+                st.session_state.sim_step = 50
+                st.session_state.sim_cash = 100000
+                st.session_state.sim_shares = 0
+                st.session_state.sim_history = []
+                st.rerun()
+            else:
+                st.error("数据获取失败")
+
+    # 2. 操盘界面
+    if st.session_state.get('sim_data') is not None:
+        df = st.session_state.sim_data
+        curr_step = st.session_state.sim_step
+        
+        if curr_step >= len(df):
+            st.success("🎉 恭喜！你跑完了所有行情。")
+            return
+
+        # 获取当前切片数据
+        curr_date = df.index[curr_step]
+        curr_price = df['close'].iloc[curr_step]
+        prev_price = df['close'].iloc[curr_step-1]
+        change_pct = (curr_price - prev_price) / prev_price
+
+        # --- 仪表盘 ---
+        m1, m2, m3, m4 = st.columns(4)
+        total_asset = st.session_state.sim_cash + st.session_state.sim_shares * curr_price
+        pnl_pct = (total_asset - 100000) / 100000
+        
+        m1.metric("当前日期", curr_date.strftime("%Y-%m-%d"))
+        m2.metric("当前价格", f"{curr_price:.2f}", f"{change_pct*100:.2f}%")
+        m3.metric("总资产", f"{total_asset:.0f}", f"{pnl_pct*100:.2f}%")
+        m4.metric("持仓", f"{st.session_state.sim_shares} 股")
+
+        # --- K线图 (只显示到当前日期) ---
+        show_df = df.iloc[:curr_step+1].copy()
+        # 计算简单均线辅助
+        show_df['MA20'] = show_df['close'].rolling(20).mean()
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(show_df.index, show_df['close'], label='收盘价', color='black')
+        ax.plot(show_df.index, show_df['MA20'], label='20日均线', color='orange', alpha=0.7)
+        ax.legend()
+        ax.set_title(f"{sim_ticker} 走势图 (隐藏未来)")
+        st.pyplot(fig)
+
+        # --- 操作区 ---
+        col_buy, col_sell, col_next = st.columns(3)
+        
+        # 买入逻辑
+        with col_buy:
+            if st.button("🟢 买入 (半仓)"):
+                cost = total_asset * 0.5
+                if st.session_state.sim_cash >= cost:
+                    shares_to_buy = int(cost / curr_price)
+                    st.session_state.sim_shares += shares_to_buy
+                    st.session_state.sim_cash -= shares_to_buy * curr_price
+                    st.session_state.sim_history.append(f"{curr_date.date()}: 买入 {shares_to_buy} 股 @ {curr_price:.2f}")
+                    st.toast("买入成功！")
+                else:
+                    st.error("现金不足！")
+
+        # 卖出逻辑
+        with col_sell:
+            if st.button("🔴 卖出 (全仓)"):
+                if st.session_state.sim_shares > 0:
+                    st.session_state.sim_cash += st.session_state.sim_shares * curr_price
+                    st.session_state.sim_history.append(f"{curr_date.date()}: 卖出 {st.session_state.sim_shares} 股 @ {curr_price:.2f}")
+                    st.session_state.sim_shares = 0
+                    st.toast("卖出成功！")
+                else:
+                    st.error("没有持仓！")
+
+        # 下一步
+        with col_next:
+            if st.button("⏭️ 下一天 (观望)"):
+                st.session_state.sim_step += 1
+                st.rerun()
+
+        # 交易记录
+        with st.expander("📜 交易记录"):
+            for h in reversed(st.session_state.sim_history):
+                st.text(h)
+
+# ==========================================
+# 6. 主程序
 # ==========================================
 def main():
     st.set_page_config(page_title="量化交易模拟器", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
     st.title("📈 量化交易模拟器")
     
-    # Tab 顺序：模拟器第一，但保留了详尽的文档Tab
-    tab_sim, tab_manual, tab_wiki = st.tabs(["🚀 开始模拟", "📘 新手手册", "🧠 策略百科"])
+    # 初始化 Session State
+    init_sim_session()
+
+    # Tab 顺序
+    tab_sim, tab_game, tab_manual, tab_wiki = st.tabs(["🚀 策略回测", "🎮 模拟操盘", "📘 新手手册", "🧠 策略百科"])
 
     with tab_manual: show_manual()
     with tab_wiki: show_wiki()
+    with tab_game: run_simulation_tab() # V4.0 新增入口
 
     with tab_sim:
         col_input, col_action = st.columns([3, 1])
