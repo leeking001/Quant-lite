@@ -11,7 +11,6 @@ import os
 import requests 
 from matplotlib import font_manager
 import random
-import textwrap # 用于处理代码缩进
 
 # ==========================================
 # 0. 系统配置
@@ -45,7 +44,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 增强版策略类 (支持自定义代码)
+# 1. 策略引擎 (支持积木式逻辑)
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -53,122 +52,112 @@ class PortfolioStrategy(bt.Strategy):
         ('use_risk_mgmt', False), 
         ('stop_loss', 0.05),      
         ('take_profit', 0.10),
-        # 现有参数
+        # 标准参数
         ('pfast', 10), ('pslow', 30),
         ('rsi_period', 14), ('rsi_low', 30), ('rsi_high', 70),
         ('boll_period', 20), ('boll_dev', 2.0),
-        # 新增参数
-        ('turtle_period', 20), # 海龟策略周期
-        ('mean_period', 20),   # 均值回归周期
-        ('custom_code', ''),   # 用户自定义代码字符串
+        ('turtle_period', 20),
+        ('mean_period', 20),
+        # --- 积木策略参数 ---
+        ('builder_indicator', 'Close'), # 指标: 收盘价/RSI/均线
+        ('builder_operator', '>'),      # 符号: > / <
+        ('builder_threshold', 'SMA'),   # 阈值: 数值/均线
+        ('builder_param', 20),          # 阈值参数 (如均线周期)
     )
 
     def __init__(self):
         self.inds = {} 
         
         for d in self.datas:
+            # --- 初始化标准策略指标 ---
             if self.params.strategy_type == 'SMA':
                 sma1 = bt.indicators.SimpleMovingAverage(d, period=self.params.pfast)
                 sma2 = bt.indicators.SimpleMovingAverage(d, period=self.params.pslow)
                 self.inds[d] = bt.indicators.CrossOver(sma1, sma2)
-            
             elif self.params.strategy_type == 'RSI':
                 self.inds[d] = bt.indicators.RSI(d, period=self.params.rsi_period)
-            
             elif self.params.strategy_type == 'Bollinger':
                 self.inds[d] = bt.indicators.BollingerBands(d, period=self.params.boll_period, devfactor=self.params.boll_dev)
-            
-            # --- 新增策略指标 ---
             elif self.params.strategy_type == 'Turtle':
-                # 唐奇安通道: 过去N天的最高价和最低价
-                self.inds[d] = {
-                    'high': bt.indicators.Highest(d.high(-1), period=self.params.turtle_period),
-                    'low': bt.indicators.Lowest(d.low(-1), period=self.params.turtle_period)
-                }
-            
+                self.inds[d] = {'high': bt.indicators.Highest(d.high(-1), period=self.params.turtle_period), 'low': bt.indicators.Lowest(d.low(-1), period=self.params.turtle_period)}
             elif self.params.strategy_type == 'MeanRev':
-                # 均值回归: 价格偏离均线太远
                 sma = bt.indicators.SMA(d, period=self.params.mean_period)
-                self.inds[d] = {
-                    'sma': sma,
-                    'dist': (d.close - sma) / sma # 偏离率
-                }
+                self.inds[d] = {'sma': sma, 'dist': (d.close - sma) / sma}
+            
+            # --- 初始化积木策略指标 (Builder) ---
+            elif self.params.strategy_type == 'Builder':
+                # 1. 准备左边 (Indicator)
+                if self.params.builder_indicator == 'RSI':
+                    self.inds[d] = {'left': bt.indicators.RSI(d, period=14)}
+                else: # Close
+                    self.inds[d] = {'left': d.close}
+                
+                # 2. 准备右边 (Threshold)
+                if self.params.builder_threshold == 'SMA':
+                    self.inds[d]['right'] = bt.indicators.SMA(d, period=self.params.builder_param)
+                else: # 固定数值
+                    self.inds[d]['right'] = float(self.params.builder_param)
 
     def next(self):
-        # 资金分配: 等权重
         target_pct = 0.95 / len(self.datas)
 
         for d in self.datas:
             pos = self.getposition(d).size
             
-            # --- 0. 自定义策略 (最高优先级) ---
-            if self.params.strategy_type == 'Custom':
-                # 这是一个危险但强大的功能：动态执行用户代码
-                # 我们把当前的上下文变量暴露给用户代码
-                context = {
-                    'self': self, 
-                    'd': d, 
-                    'pos': pos, 
-                    'target_pct': target_pct,
-                    'bt': bt
-                }
-                try:
-                    exec(self.params.custom_code, {}, context)
-                except Exception as e:
-                    # 避免报错刷屏，只打印一次
-                    pass
-                continue # 执行完自定义代码后，跳过后续逻辑
-
-            # --- 1. 风控逻辑 ---
+            # 风控 (最高优先级)
             if pos != 0 and self.params.use_risk_mgmt:
                 buy_price = self.getposition(d).price
-                current_price = d.close[0]
-                pnl_pct = (current_price - buy_price) / buy_price
-
+                pnl_pct = (d.close[0] - buy_price) / buy_price
                 if pnl_pct <= -self.params.stop_loss:
-                    self.close(data=d)
-                    continue 
+                    self.close(data=d); continue 
                 if pnl_pct >= self.params.take_profit:
-                    self.close(data=d)
-                    continue
+                    self.close(data=d); continue
 
-            # --- 2. 内置策略逻辑 ---
-            
-            # SMA (双均线)
-            if self.params.strategy_type == 'SMA':
-                if not pos and self.inds[d] > 0: self.order_target_percent(data=d, target=target_pct)
-                elif pos and self.inds[d] < 0: self.close(data=d)
+            # --- 策略逻辑 ---
+            signal_buy = False
+            signal_sell = False
 
-            # RSI
+            # 1. 积木策略 (Builder)
+            if self.params.strategy_type == 'Builder':
+                left_val = self.inds[d]['left'][0]
+                # 如果右边是指标，取值；如果是数字，直接用
+                right_val = self.inds[d]['right'][0] if hasattr(self.inds[d]['right'], '__getitem__') else self.inds[d]['right']
+                
+                op = self.params.builder_operator
+                
+                # 判断逻辑
+                condition = False
+                if op == '>': condition = left_val > right_val
+                elif op == '<': condition = left_val < right_val
+                
+                if condition: signal_buy = True
+                else: signal_sell = True # 简单的反向逻辑：不满足买入就卖出(简化版)
+
+            # 2. 标准策略
+            elif self.params.strategy_type == 'SMA':
+                if self.inds[d] > 0: signal_buy = True
+                elif self.inds[d] < 0: signal_sell = True
             elif self.params.strategy_type == 'RSI':
-                if not pos and self.inds[d] < self.params.rsi_low: self.order_target_percent(data=d, target=target_pct)
-                elif pos and self.inds[d] > self.params.rsi_high: self.close(data=d)
-            
-            # Bollinger
+                if self.inds[d] < self.params.rsi_low: signal_buy = True
+                elif self.inds[d] > self.params.rsi_high: signal_sell = True
             elif self.params.strategy_type == 'Bollinger':
-                if not pos and d.close[0] < self.inds[d].lines.bot[0]: self.order_target_percent(data=d, target=target_pct)
-                elif pos and d.close[0] > self.inds[d].lines.top[0]: self.close(data=d)
-
-            # Turtle (海龟/唐奇安通道)
+                if d.close[0] < self.inds[d].lines.bot[0]: signal_buy = True
+                elif d.close[0] > self.inds[d].lines.top[0]: signal_sell = True
             elif self.params.strategy_type == 'Turtle':
-                # 突破过去20天最高价 -> 买入
-                if not pos and d.close[0] > self.inds[d]['high'][0]:
-                    self.order_target_percent(data=d, target=target_pct)
-                # 跌破过去10天最低价 -> 卖出 (这里简化为同周期)
-                elif pos and d.close[0] < self.inds[d]['low'][0]:
-                    self.close(data=d)
-
-            # Mean Reversion (均值回归)
+                if d.close[0] > self.inds[d]['high'][0]: signal_buy = True
+                elif d.close[0] < self.inds[d]['low'][0]: signal_sell = True
             elif self.params.strategy_type == 'MeanRev':
-                # 价格低于均线 5% -> 买入
-                if not pos and self.inds[d]['dist'][0] < -0.05:
-                    self.order_target_percent(data=d, target=target_pct)
-                # 回归到均线 -> 卖出
-                elif pos and d.close[0] >= self.inds[d]['sma'][0]:
-                    self.close(data=d)
+                if self.inds[d]['dist'][0] < -0.05: signal_buy = True
+                elif d.close[0] >= self.inds[d]['sma'][0]: signal_sell = True
+
+            # 执行交易
+            if not pos and signal_buy:
+                self.order_target_percent(data=d, target=target_pct)
+            elif pos and signal_sell:
+                self.close(data=d)
 
 # ==========================================
-# 2. 数据获取 (保持 V2.0)
+# 2. 数据获取 (保持 V2.1)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_multiple_data(source, tickers_list, start_date, end_date):
@@ -207,27 +196,77 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     return data_dict, bench_df
 
 # ==========================================
-# 3. 界面辅助
+# 3. 文案与教程
 # ==========================================
-def show_welcome_guide():
-    st.info("👋 欢迎！V2.1 新增：海龟策略、均值回归、以及**自定义代码模式**。")
+def show_manual():
+    st.markdown("""
+    ## 📘 新手保姆级手册
+    
+    ### 第一阶段：准备工作
+    1.  **选市场**: 
+        *   如果你想玩 **茅台、宁德时代**，请选 **A股**。
+        *   如果你想玩 **苹果、特斯拉、比特币**，请选 **美股/港股**。
+    2.  **输代码**: 
+        *   支持一次测多只！用逗号隔开。
+        *   例如: `600519, 000858` (茅台+五粮液)。
+    
+    ### 第二阶段：选择武器 (策略)
+    *   **小白推荐**: 先用 **双均线 (SMA)**。这是最经典的策略，容易理解。
+    *   **进阶玩家**: 试试 **海龟交易**，这是捕捉大牛股的神器。
+    *   **高玩**: 使用 **🛠️ 策略工厂**，自己定义买卖逻辑！
+
+    ### 第三阶段：风控 (最重要!)
+    *   **止损 (Stop Loss)**: 类似于“保险丝”。比如设 5%，亏了 5% 自动断电（卖出），防止房子烧光（本金亏光）。
+    *   **止盈 (Take Profit)**: 类似于“收网”。赚够了就跑，防止煮熟的鸭子飞了。
+
+    ### 第四阶段：看懂结果
+    *   **资金曲线**: 蓝线是你，灰线是大盘。蓝线在灰线上面，说明你牛；在下面，说明你菜。
+    *   **Alpha**: 正数=牛，负数=菜。
+    *   **最大回撤**: 越小越好。如果回撤 -50%，说明你资产腰斩过，心脏受得了吗？
+    """)
+
+def show_wiki():
+    st.markdown("""
+    ## 🧠 策略百科全书
+
+    ### 1. 双均线 (SMA Cross)
+    *   **原理**: 两根线，一快一慢。快线上穿慢线叫“金叉”（买），下穿叫“死叉”（卖）。
+    *   **适用**: **大牛市、大熊市**。
+    *   **缺点**: **震荡市**。股价横盘时，两根线会反复缠绕，导致你频繁买卖，亏手续费。
+    *   **参数**: 
+        *   *快线周期*: 灵敏度。越小越灵敏，但也越容易被骗。
+        *   *慢线周期*: 稳定性。越大越稳，但信号来得越晚。
+
+    ### 2. RSI (相对强弱)
+    *   **原理**: 测量市场的情绪。0-100分。低于30分大家恐慌（抄底），高于70分大家狂热（逃顶）。
+    *   **适用**: **震荡市**。股价在一个箱体里来回跳。
+    *   **缺点**: **大牛市**。牛市里 RSI 会一直高于 70，如果你卖了，就踏空了后面的大涨。
+
+    ### 3. 海龟交易 (Turtle)
+    *   **原理**: 价格突破了过去 N 天的最高价，说明新趋势来了，无脑追涨！
+    *   **适用**: **趋势行情**。
+    *   **缺点**: 假突破。看着突破了，买进去立马跌回来。
+
+    ### 4. 均值回归 (Mean Reversion)
+    *   **原理**: 橡皮筋理论。价格拉得离均线太远，总会弹回来。
+    *   **适用**: **急涨急跌**后的修复行情。
+    """)
 
 # ==========================================
 # 4. 主程序
 # ==========================================
 def main():
-    st.set_page_config(page_title="量化极客版", layout="wide", page_icon="👨‍💻", initial_sidebar_state="collapsed")
-    st.title("👨‍💻 量化极客版 (V2.1)")
+    st.set_page_config(page_title="量化工厂 V3.0", layout="wide", page_icon="🏭", initial_sidebar_state="collapsed")
+    st.title("🏭 量化策略工厂 (V3.0)")
     
-    show_welcome_guide()
-
+    # --- 顶部输入区 ---
     col_input, col_action = st.columns([3, 1])
     with col_input:
         if 'demo_mode' not in st.session_state: st.session_state.demo_mode = False
         default_tickers = "AAPL, MSFT, NVDA"
         default_source = "美股/港股"
         
-        if st.button("🎲 随机演示"):
+        if st.button("🎲 随机演示 (Demo)"):
             st.session_state.demo_mode = True
             demos = [("美股/港股", "AAPL, TSLA, AMZN"), ("A股", "600519, 000858, 600036")]
             choice = random.choice(demos)
@@ -235,127 +274,144 @@ def main():
             default_tickers = choice[1]
 
         data_source = st.selectbox("市场", ["美股/港股", "A股"], index=0 if default_source=="美股/港股" else 1)
-        tickers_input = st.text_area("股票代码", value=default_tickers, height=68)
+        tickers_input = st.text_area("股票代码", value=default_tickers, height=68, help="输入代码，用逗号隔开")
 
-    # --- 策略配置区 ---
-    with st.expander("⚙️ 策略配置 (点我展开)", expanded=True):
+    # --- 策略配置区 (核心升级) ---
+    with st.expander("⚙️ 策略配置 (点击展开)", expanded=True):
         c1, c2 = st.columns(2)
-        start_date = c1.date_input("开始", datetime.date(2021, 1, 1))
-        cash = c2.number_input("本金", 100000)
+        start_date = c1.date_input("开始日期", datetime.date(2021, 1, 1))
+        cash = c2.number_input("初始本金", 100000, help="建议 10万 以上")
         
-        # 策略映射
+        # 策略选择
         strat_map = {
+            "🛠️ 零代码策略工厂 (自定义)": "Builder",
             "双均线 (趋势)": "SMA", 
             "RSI (反转)": "RSI", 
             "布林带 (通道)": "Bollinger",
-            "海龟交易 (突破)": "Turtle",  # 新增
-            "均值回归 (抄底)": "MeanRev", # 新增
-            "🛠️ 自定义策略 (写代码)": "Custom" # 新增
+            "海龟交易 (突破)": "Turtle",
+            "均值回归 (抄底)": "MeanRev"
         }
-        s_name = st.selectbox("策略模型", list(strat_map.keys()))
+        s_name = st.selectbox("选择策略模型", list(strat_map.keys()))
         s_code = strat_map[s_name]
         
-        # 动态参数显示
+        # --- 动态参数区 ---
         params = {}
-        custom_code_input = ""
         
-        if s_code == "Custom":
-            st.warning("⚠️ 高级功能：请直接编写 Python 代码逻辑。变量 `d` 代表当前股票数据，`pos` 代表当前持仓。")
+        if s_code == "Builder":
+            st.info("🏗️ **策略工厂**：用自然语言搭建你的策略！")
+            bc1, bc2, bc3, bc4 = st.columns([2, 1, 2, 2])
             
-            # 代码模板
-            code_template = """# 示例：简单的价格突破策略
-# 如果 收盘价 > 开盘价 * 1.02 (涨2%) -> 买入
-# 如果 收盘价 < 开盘价 * 0.98 (跌2%) -> 卖出
+            with bc1:
+                b_ind = st.selectbox("当...", ["收盘价 (Price)", "RSI指标"], help="选择作为判断依据的指标")
+                params['builder_indicator'] = 'RSI' if 'RSI' in b_ind else 'Close'
+            
+            with bc2:
+                params['builder_operator'] = st.selectbox("比较", [">", "<"], help="大于还是小于")
+            
+            with bc3:
+                b_thres = st.selectbox("目标...", ["均线 (SMA)", "固定数值"], help="和什么比较？")
+                params['builder_threshold'] = 'SMA' if 'SMA' in b_thres else 'Value'
+            
+            with bc4:
+                if params['builder_threshold'] == 'SMA':
+                    params['builder_param'] = st.number_input("均线周期", 5, 200, 20, help="例如 20日均线")
+                    desc = f"当 **{b_ind}** {params['builder_operator']} **{params['builder_param']}日均线** 时 -> **买入**"
+                else:
+                    def_val = 30 if params['builder_indicator'] == 'RSI' else 100
+                    params['builder_param'] = st.number_input("数值", 0, 10000, def_val)
+                    desc = f"当 **{b_ind}** {params['builder_operator']} **{params['builder_param']}** 时 -> **买入**"
+            
+            st.success(f"📝 当前策略逻辑：{desc} (反之卖出)")
 
-if not pos and d.close[0] > d.open[0] * 1.02:
-    self.order_target_percent(data=d, target=target_pct)
-    
-elif pos and d.close[0] < d.open[0] * 0.98:
-    self.close(data=d)
-"""
-            custom_code_input = st.text_area("Python 代码编辑器", value=code_template, height=200)
-            params['custom_code'] = custom_code_input
-            
         elif s_code == "SMA":
-            params['pfast'] = st.slider("快线", 5, 30, 10)
-            params['pslow'] = st.slider("慢线", 20, 60, 30)
+            st.caption("经典趋势策略：快线上穿慢线买入。")
+            params['pfast'] = st.slider("快线周期", 5, 30, 10, help="灵敏度高")
+            params['pslow'] = st.slider("慢线周期", 20, 60, 30, help="稳定性高")
+        elif s_code == "RSI":
+            st.caption("经典反转策略：低买高卖。")
+            params['rsi_period'] = 14
+            params['rsi_low'] = st.slider("超卖阈值 (买)", 10, 40, 30)
+            params['rsi_high'] = st.slider("超买阈值 (卖)", 60, 90, 70)
         elif s_code == "Turtle":
-            st.caption("💡 海龟法则：突破过去 N 天最高价买入。")
-            params['turtle_period'] = st.slider("突破周期 (天)", 10, 60, 20)
+            st.caption("海龟法则：突破过去 N 天最高价。")
+            params['turtle_period'] = st.slider("突破周期", 10, 60, 20)
         elif s_code == "MeanRev":
-            st.caption("💡 均值回归：价格偏离均线太远时反向操作。")
+            st.caption("均值回归：价格偏离均线过大。")
             params['mean_period'] = st.slider("均线周期", 10, 50, 20)
-        # ... 其他略 ...
 
-        # 风控 (自定义模式下通常由代码控制，但这里保留作为全局硬风控)
-        if s_code != "Custom":
-            st.caption("🛡️ 全局风控")
-            use_risk = st.checkbox("开启止盈止损", value=True)
-            stop_loss = st.slider("止损%", 1, 20, 5) / 100.0
-            take_profit = st.slider("止盈%", 5, 50, 15) / 100.0
-        else:
-            use_risk = False # 自定义模式默认关闭硬风控，交给代码
-            stop_loss = 0.05
-            take_profit = 0.15
+        # 风控
+        st.divider()
+        st.caption("🛡️ **风控设置** (建议开启)")
+        use_risk = st.checkbox("开启自动止盈止损", value=True)
+        stop_loss = st.slider("止损 (Stop Loss)", 1, 20, 5, help="亏损达到此比例自动卖出") / 100.0
+        take_profit = st.slider("止盈 (Take Profit)", 5, 50, 15, help="盈利达到此比例自动卖出") / 100.0
 
     run_btn = st.button("🚀 开始回测", type="primary", use_container_width=True)
 
-    if run_btn or st.session_state.demo_mode:
-        st.session_state.demo_mode = False
-        ticker_list = [t.strip() for t in tickers_input.split(',') if t.strip()]
-        
-        if not ticker_list: st.error("请输入代码")
-        else:
-            with st.spinner("正在计算..."):
-                data_dict, df_bench = get_multiple_data(data_source, ticker_list, start_date, datetime.date.today())
-                
-                if not data_dict: st.error("数据失败")
-                else:
-                    cerebro = bt.Cerebro()
-                    for t, df in data_dict.items():
-                        data = bt.feeds.PandasData(dataname=df, name=t)
-                        cerebro.adddata(data)
-                    
-                    cerebro.addstrategy(PortfolioStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
-                    cerebro.broker.setcash(cash)
-                    cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
-                    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-                    
-                    results = cerebro.run()
-                    strat = results[0]
-                    
-                    strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
-                    strat_returns.index = pd.to_datetime(strat_returns.index)
-                    
-                    bench_returns = None
-                    if not df_bench.empty and 'close' in df_bench.columns:
-                        bench_returns = df_bench['close'].pct_change().fillna(0)
-                        bench_returns.index = pd.to_datetime(bench_returns.index)
-                        bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
+    # --- 结果展示 ---
+    tab1, tab2, tab3 = st.tabs(["📊 回测结果", "📘 新手手册", "🧠 策略百科"])
 
-                    final_cash = cerebro.broker.getvalue()
-                    ret_pct = (final_cash - cash) / cash
-                    max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
+    with tab1:
+        if run_btn or st.session_state.demo_mode:
+            st.session_state.demo_mode = False
+            ticker_list = [t.strip() for t in tickers_input.split(',') if t.strip()]
+            
+            if not ticker_list: st.error("请输入代码")
+            else:
+                with st.spinner("正在构建策略工厂..."):
+                    data_dict, df_bench = get_multiple_data(data_source, ticker_list, start_date, datetime.date.today())
                     
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("最终资产", f"${final_cash/1000:.1f}k")
-                    c2.metric("总收益", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
-                    c3.metric("最大回撤", f"{max_dd:.1f}%")
-                    
-                    fig, ax = plt.subplots(figsize=(8, 4))
-                    cum_strat = (1 + strat_returns).cumprod()
-                    ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2)
-                    if bench_returns is not None:
-                        cum_bench = (1 + bench_returns).cumprod()
-                        ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6)
-                    st.pyplot(fig)
-                    
-                    with st.expander("📊 详细报告"):
-                        try:
-                            report_file = "qs_mobile.html"
-                            qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
-                            with open(report_file, 'r', encoding='utf-8') as f: components.html(f.read(), height=600, scrolling=True)
-                        except: pass
+                    if not data_dict: st.error("数据获取失败")
+                    else:
+                        cerebro = bt.Cerebro()
+                        for t, df in data_dict.items():
+                            data = bt.feeds.PandasData(dataname=df, name=t)
+                            cerebro.adddata(data)
+                        
+                        cerebro.addstrategy(PortfolioStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
+                        cerebro.broker.setcash(cash)
+                        cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
+                        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+                        
+                        results = cerebro.run()
+                        strat = results[0]
+                        
+                        strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
+                        strat_returns.index = pd.to_datetime(strat_returns.index)
+                        
+                        bench_returns = None
+                        if not df_bench.empty and 'close' in df_bench.columns:
+                            bench_returns = df_bench['close'].pct_change().fillna(0)
+                            bench_returns.index = pd.to_datetime(bench_returns.index)
+                            bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
+
+                        final_cash = cerebro.broker.getvalue()
+                        ret_pct = (final_cash - cash) / cash
+                        max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
+                        
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("最终资产", f"${final_cash/1000:.1f}k")
+                        c2.metric("总收益", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
+                        c3.metric("最大回撤", f"{max_dd:.1f}%")
+                        
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        cum_strat = (1 + strat_returns).cumprod()
+                        ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2, label='策略')
+                        if bench_returns is not None:
+                            cum_bench = (1 + bench_returns).cumprod()
+                            ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6, label='基准')
+                        ax.legend()
+                        st.pyplot(fig)
+                        
+                        with st.expander("📊 详细报告 (QuantStats)"):
+                            try:
+                                report_file = "qs_mobile.html"
+                                qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
+                                with open(report_file, 'r', encoding='utf-8') as f: components.html(f.read(), height=600, scrolling=True)
+                            except: pass
+
+    with tab2: show_manual()
+    with tab3: show_wiki()
 
 if __name__ == '__main__':
     main()
