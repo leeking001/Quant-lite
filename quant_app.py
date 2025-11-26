@@ -163,7 +163,58 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     return data_dict, bench_df
 
 # ==========================================
-# 3. 文案内容 (增强版)
+# 3. 智能顾问逻辑 (V3.9 新增)
+# ==========================================
+def generate_strategy_report(ret_pct, max_dd, alpha, sharpe):
+    score = 0
+    if ret_pct > 0: score += 20
+    if ret_pct > 0.2: score += 10
+    if alpha > 0: score += 20
+    if max_dd > -20: score += 20 
+    if sharpe and sharpe > 1.0: score += 30
+    
+    if score >= 80: stars = "⭐⭐⭐⭐⭐ (卓越)"
+    elif score >= 60: stars = "⭐⭐⭐⭐ (优秀)"
+    elif score >= 40: stars = "⭐⭐⭐ (良好)"
+    elif score >= 20: stars = "⭐⭐ (及格)"
+    else: stars = "⭐ (失败)"
+
+    verdict = ""
+    advice = []
+    
+    if ret_pct <= 0:
+        verdict = "❌ **策略失效**"
+        advice.append("策略在测试期内是亏损的，切勿实盘。")
+        advice.append("尝试更换策略模型（如从趋势改为反转）。")
+    elif ret_pct < 0.1: 
+        verdict = "⚠️ **收益微薄**"
+        advice.append("收益率甚至不如买理财，性价比低。")
+        advice.append("可能是交易太频繁导致手续费过高，尝试调大均线周期。")
+    else:
+        verdict = "✅ **策略有效**"
+        
+    if max_dd < -30:
+        verdict = "⚠️ **风险过高**"
+        advice.append(f"最大回撤达到了 {max_dd:.1f}%，这意味着你的资产可能腰斩。")
+        advice.append("强烈建议开启【自动止损】，或降低止损阈值（如设为 5%）。")
+    
+    if alpha < 0:
+        advice.append("虽然赚钱了，但没跑赢大盘。不如直接买指数基金（ETF）省心。")
+    else:
+        advice.append("恭喜！你凭本事跑赢了市场基准。")
+
+    next_step = ""
+    if score >= 60:
+        next_step = "🚀 **建议**：该策略表现稳健，可以尝试小资金实盘，或换一个时间段（如熊市）再测一次验证稳定性。"
+    elif score >= 40:
+        next_step = "🔧 **建议**：策略有潜力，但需要优化。试着调整参数（如 RSI 阈值、均线周期）再测几次。"
+    else:
+        next_step = "🛑 **建议**：该策略逻辑在当前市场行不通。请彻底更换思路或股票。"
+
+    return stars, verdict, advice, next_step
+
+# ==========================================
+# 4. 文案内容 (保留 V3.8 详尽版)
 # ==========================================
 def show_manual():
     st.markdown("""
@@ -235,13 +286,14 @@ def show_wiki():
     """)
 
 # ==========================================
-# 4. 主程序
+# 5. 主程序
 # ==========================================
 def main():
     st.set_page_config(page_title="量化交易模拟器", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
     st.title("📈 量化交易模拟器")
     
-    tab_manual, tab_wiki, tab_sim = st.tabs(["📘 新手手册 (必读)", "🧠 策略百科", "🚀 开始模拟"])
+    # Tab 顺序：模拟器第一，但保留了详尽的文档Tab
+    tab_sim, tab_manual, tab_wiki = st.tabs(["🚀 开始模拟", "📘 新手手册", "🧠 策略百科"])
 
     with tab_manual: show_manual()
     with tab_wiki: show_wiki()
@@ -333,6 +385,7 @@ def main():
                             cerebro.broker.setcash(cash)
                             cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
                             cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+                            cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
                             
                             try:
                                 results = cerebro.run()
@@ -350,7 +403,35 @@ def main():
                                 final_cash = cerebro.broker.getvalue()
                                 ret_pct = (final_cash - cash) / cash
                                 max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
+                                sharpe = strat.analyzers.sharpe.get_analysis().get('sharperatio')
                                 
+                                alpha = 0
+                                if bench_returns is not None:
+                                    bench_total = (1 + bench_returns).cumprod().iloc[-1] - 1
+                                    alpha = ret_pct - bench_total
+
+                                # --- 智能顾问报告 ---
+                                stars, verdict, advice, next_step = generate_strategy_report(ret_pct, max_dd, alpha, sharpe)
+                                
+                                st.divider()
+                                st.subheader("🤖 智能回测点评")
+                                
+                                col_score, col_verdict = st.columns([1, 3])
+                                with col_score:
+                                    st.metric("综合评分", stars)
+                                with col_verdict:
+                                    if "失效" in verdict: st.error(verdict)
+                                    elif "微薄" in verdict or "风险" in verdict: st.warning(verdict)
+                                    else: st.success(verdict)
+                                
+                                with st.container(border=True):
+                                    st.markdown("**🧐 详细分析：**")
+                                    for item in advice:
+                                        st.markdown(f"- {item}")
+                                    st.markdown("---")
+                                    st.markdown(next_step)
+                                st.divider()
+
                                 c1, c2, c3 = st.columns(3)
                                 c1.metric("最终资产", f"${final_cash/1000:.1f}k", help="回测结束时，你账户里的总钱数（本金+盈亏）。")
                                 c2.metric("总收益率", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse", help="（最终资产 - 初始本金）/ 初始本金。")
@@ -367,7 +448,6 @@ def main():
                                 
                                 with st.expander("📊 详细数据报告 (中文版)"):
                                     try:
-                                        # 1. 手机端表格
                                         metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
                                         trans_map = {
                                             'Start Period': '开始日期', 'End Period': '结束日期',
@@ -404,15 +484,11 @@ def main():
                                         metrics_cn = metrics.rename(index=trans_map)
                                         st.dataframe(metrics_cn, use_container_width=True)
                                         
-                                        # 2. 生成并汉化 HTML 报告
                                         report_file = "qs_report.html"
                                         qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Quant Report", download_filename=report_file)
-                                        
-                                        # 暴力汉化 HTML 内容
                                         with open(report_file, 'r', encoding='utf-8') as f:
                                             html_content = f.read()
                                         
-                                        # 替换常用英文关键词
                                         html_content = html_content.replace('Strategy', '我的策略')
                                         html_content = html_content.replace('Benchmark', '市场基准')
                                         html_content = html_content.replace('Cumulative Return', '累计收益率')
@@ -427,7 +503,6 @@ def main():
                                         html_content = html_content.replace('Rolling Sharpe', '滚动夏普比')
                                         html_content = html_content.replace('Underwater Plot', '潜水图 (回撤)')
                                         
-                                        # 提供汉化后的下载
                                         st.download_button("📥 下载完整HTML报告 (已汉化)", html_content, file_name="report_cn.html", mime="text/html")
                                         
                                     except Exception as e:
