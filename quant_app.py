@@ -64,10 +64,6 @@ class PortfolioStrategy(bt.Strategy):
     def __init__(self):
         self.inds = {} 
         for d in self.datas:
-            # 动态获取该股票的指标参数，防止数据长度不够计算长周期指标
-            # 这里做一个简单的容错：如果数据长度不够，Backtrader通常会在预处理阶段报错
-            # 所以我们在主程序里做长度过滤更安全
-            
             if self.params.strategy_type == 'SMA':
                 sma1 = bt.indicators.SimpleMovingAverage(d, period=self.params.pfast)
                 sma2 = bt.indicators.SimpleMovingAverage(d, period=self.params.pslow)
@@ -88,22 +84,15 @@ class PortfolioStrategy(bt.Strategy):
                 else: self.inds[d]['right'] = float(self.params.builder_param)
 
     def next(self):
-        # 动态计算仓位：总资金的 95% 除以 股票数量
-        # 注意：如果某只股票数据中间断了，len(self.datas) 依然是总数，这没问题
         target_pct = 0.95 / len(self.datas)
-        
         for d in self.datas:
-            # 检查数据是否足够长以产生信号 (防止某些指标前期为 NaN)
-            # Backtrader 内部会自动处理 NaN，但为了保险起见
-            if len(d) < self.params.pslow: 
-                continue
-
+            if len(d) < self.params.pslow: continue
             pos = self.getposition(d).size
             
             # 风控
             if pos != 0 and self.params.use_risk_mgmt:
                 buy_price = self.getposition(d).price
-                if buy_price > 0: # 防止除以0
+                if buy_price > 0:
                     pnl_pct = (d.close[0] - buy_price) / buy_price
                     if pnl_pct <= -self.params.stop_loss: self.close(data=d); continue 
                     if pnl_pct >= self.params.take_profit: self.close(data=d); continue
@@ -111,7 +100,6 @@ class PortfolioStrategy(bt.Strategy):
             # 策略逻辑
             signal_buy = False
             signal_sell = False
-
             try:
                 if self.params.strategy_type == 'Builder':
                     left_val = self.inds[d]['left'][0]
@@ -135,9 +123,7 @@ class PortfolioStrategy(bt.Strategy):
                 elif self.params.strategy_type == 'MeanRev':
                     if self.inds[d]['dist'][0] < -0.05: signal_buy = True
                     elif d.close[0] >= self.inds[d]['sma'][0]: signal_sell = True
-            except:
-                # 如果指标计算出错（例如数据不够），忽略该信号
-                continue
+            except: continue
 
             if not pos and signal_buy: self.order_target_percent(data=d, target=target_pct)
             elif pos and signal_sell: self.close(data=d)
@@ -153,7 +139,6 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     for ticker in tickers_list:
         ticker = ticker.strip()
         if not ticker: continue
-        
         search_ticker = ticker
         if source == "A股" and ticker.isdigit():
             if ticker.startswith('6'): search_ticker = f"{ticker}.SS"
@@ -180,36 +165,69 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
     return data_dict, bench_df
 
 # ==========================================
-# 3. 文案内容
+# 3. 文案内容 (全中文优化)
 # ==========================================
 def show_manual():
     st.markdown("""
     ### 📘 新手保姆级手册
-    **第一步：准备工作**
-    1.  **选市场**: 玩茅台选 **A股**，玩苹果/特斯拉选 **美股/港股**。
-    2.  **输代码**: A股输数字(如600519)，美股输字母(如AAPL)。支持多只，逗号隔开。
-    3.  **本金**: 建议填 **100,000** 以上。
-    **第二步：选择策略**
-    *   **稳健型**: 推荐 **双均线 (SMA)** 或 **布林带**。
-    *   **激进型**: 推荐 **海龟交易** 或 **RSI**。
-    **第三步：风控 (必看!)**
-    *   **止损**: 建议 **5%**。
-    *   **止盈**: 建议 **15%**。
+
+    #### 1. 这个模拟器是干什么的？(原理揭秘)
+    想象你有一台**时光机**。
+    *   你带着 **10万块钱** 回到了 **2021年**。
+    *   你严格按照一个规则（比如“金叉买死叉卖”）去炒股，绝不手软。
+    *   模拟器就是帮你算出：**如果你真的这么做了，今天你手里会有多少钱？**
+    *   这叫**“回测” (Backtest)**。如果一个策略在过去3年都亏钱，你敢拿它去炒明天的股吗？
+
+    #### 2. 快速上手三步走
+    *   **第一步：选战场**
+        *   **A股**: 玩茅台、宁德时代。输入6位数字代码 (如 `600519`)。
+        *   **美股**: 玩苹果、特斯拉。输入字母代码 (如 `AAPL`)。
+    *   **第二步：选武器 (策略)**
+        *   **双均线**: 最简单的趋势策略，适合大牛市。
+        *   **布林带**: 适合震荡市，高抛低吸。
+        *   **策略工厂**: 自己用积木搭建逻辑，比如“收盘价 > 20日均线就买”。
+    *   **第三步：设防线 (风控)**
+        *   **止损 (Stop Loss)**: 比如设 5%。买入后如果跌了 5%，系统强制卖出。**这是保命符！**
+        *   **止盈 (Take Profit)**: 比如设 15%。赚够了就跑。
+
+    #### 3. 量化黑话词典
+    *   **Alpha (阿尔法)**: 你比大盘多赚的钱。正数代表你牛，负数代表你菜。
+    *   **Beta (贝塔)**: 随大流赚的钱。牛市来了大家都赚钱，这就是 Beta。
+    *   **夏普比率 (Sharpe)**: 性价比。每承担一份风险，能赚多少钱。**大于 1.0 算不错**。
+    *   **最大回撤 (Drawdown)**: 历史上最倒霉的时候，从最高点跌下来跌了多少。**越小越好**。
     """)
 
 def show_wiki():
     st.markdown("""
     ### 🧠 策略百科全书
+
     #### 1. 双均线 (SMA Cross)
-    *   **原理**: 快线上穿慢线买入。**适用**: 大趋势。**缺点**: 震荡市亏损。
-    #### 2. RSI (相对强弱)
-    *   **原理**: 低分抄底，高分逃顶。**适用**: 震荡市。**缺点**: 牛市踏空。
-    #### 3. 布林带 (Bollinger)
-    *   **原理**: 跌破下轨买，突破上轨卖。**适用**: 震荡修复。
+    *   **一句话**: "金叉买，死叉卖"。
+    *   **原理**: 有两根线，一根快（反应灵敏），一根慢（反应迟钝）。当快线向上穿过慢线，说明涨势确立，买入。
+    *   **适合**: **大牛市、大熊市**（单边行情）。
+    *   **缺点**: **震荡市**。股价横盘时，两根线会反复纠缠，导致你频繁买卖，把本金亏在手续费上。
+
+    #### 2. RSI (相对强弱指标)
+    *   **一句话**: "物极必反"。
+    *   **原理**: 给市场情绪打分（0-100）。低于30分说明大家恐慌过度（超卖），是抄底机会；高于70分说明大家狂热过度（超买），是逃顶机会。
+    *   **适合**: **震荡市**（箱体波动）。
+    *   **缺点**: **大牛市**。牛市里 RSI 会一直很高，如果你卖了，就踏空了后面的大涨。
+
+    #### 3. 布林带 (Bollinger Bands)
+    *   **一句话**: "回归中枢"。
+    *   **原理**: 股价通常在一条“通道”里运行。跌破下轨说明被低估，买入；突破上轨说明被高估，卖出。
+    *   **适合**: **震荡修复行情**。
+
     #### 4. 海龟交易 (Turtle)
-    *   **原理**: 突破新高追涨。**适用**: 大牛市。**缺点**: 假突破。
+    *   **一句话**: "追涨杀跌"。
+    *   **原理**: 只要价格突破了过去 N 天的最高价，说明新一轮大趋势开始了，果断追涨，不要怕高。
+    *   **适合**: **大趋势行情**。
+    *   **缺点**: **假突破**。看着突破了，买进去立马回调被套。
+
     #### 5. 均值回归 (Mean Reversion)
-    *   **原理**: 偏离均线太远会回调。**适用**: 急涨急跌。
+    *   **一句话**: "橡皮筋理论"。
+    *   **原理**: 价格拉得离均线太远（比如跌了5%），就像拉紧的橡皮筋，总会弹回来。
+    *   **适合**: **急涨急跌**后的反弹。
     """)
 
 # ==========================================
@@ -228,25 +246,26 @@ def main():
         col_input, col_action = st.columns([3, 1])
         with col_input:
             default_tickers = "AAPL, MSFT, NVDA"
-            data_source = st.selectbox("市场", ["美股/港股", "A股"])
-            tickers_input = st.text_area("股票代码 (用逗号隔开)", value=default_tickers, height=68)
+            data_source = st.selectbox("选择市场", ["美股/港股", "A股"])
+            tickers_input = st.text_area("股票代码 (支持多只，用逗号隔开)", value=default_tickers, height=68)
 
-        with st.expander("⚙️ 策略与风控配置", expanded=True):
+        with st.expander("⚙️ 策略与风控配置 (点击展开)", expanded=True):
             c1, c2 = st.columns(2)
-            start_date = c1.date_input("开始日期", datetime.date(2021, 1, 1))
-            cash = c2.number_input("初始本金", 100000, help="建议 10万 以上")
+            start_date = c1.date_input("回测开始日期", datetime.date(2021, 1, 1))
+            cash = c2.number_input("初始本金 (元/美元)", 100000, help="建议 10万 以上，防止买不起高价股")
             
             strat_map = {
                 "🛠️ 零代码策略工厂": "Builder",
-                "双均线 (趋势)": "SMA", 
-                "RSI (反转)": "RSI", 
-                "布林带 (通道)": "Bollinger",
-                "海龟交易 (突破)": "Turtle",
-                "均值回归 (抄底)": "MeanRev"
+                "双均线 (趋势策略)": "SMA", 
+                "RSI (反转策略)": "RSI", 
+                "布林带 (通道策略)": "Bollinger",
+                "海龟交易 (突破策略)": "Turtle",
+                "均值回归 (抄底策略)": "MeanRev"
             }
             s_name = st.selectbox("选择策略模型", list(strat_map.keys()))
             s_code = strat_map[s_name]
             
+            # --- 参数汉化区 ---
             params = {}
             if s_code == "Builder":
                 st.info("🏗️ **策略工厂**：当 [指标] [比较] [阈值] 时买入")
@@ -254,64 +273,60 @@ def main():
                 with bc1:
                     b_ind = st.selectbox("指标", ["收盘价", "RSI"])
                     params['builder_indicator'] = 'RSI' if 'RSI' in b_ind else 'Close'
-                with bc2: params['builder_operator'] = st.selectbox("比较", [">", "<"])
+                with bc2: params['builder_operator'] = st.selectbox("比较符", ["> (大于)", "< (小于)"])
                 with bc3:
                     b_thres = st.selectbox("阈值类型", ["均线 (SMA)", "固定数值"])
                     params['builder_threshold'] = 'SMA' if 'SMA' in b_thres else 'Value'
                 with bc4:
                     def_val = 20 if params['builder_threshold'] == 'SMA' else (30 if params['builder_indicator'] == 'RSI' else 100)
                     params['builder_param'] = st.number_input("参数值", 0, 10000, def_val)
+                
+                # 修正比较符传参
+                params['builder_operator'] = '>' if '>' in params['builder_operator'] else '<'
 
             elif s_code == "SMA":
-                params['pfast'] = st.slider("快线周期", 5, 30, 10)
-                params['pslow'] = st.slider("慢线周期", 20, 60, 30)
+                params['pfast'] = st.slider("快线周期 (灵敏)", 5, 30, 10)
+                params['pslow'] = st.slider("慢线周期 (稳定)", 20, 60, 30)
             elif s_code == "RSI":
                 params['rsi_period'] = 14
-                params['rsi_low'] = st.slider("超卖 (买)", 10, 40, 30)
-                params['rsi_high'] = st.slider("超买 (卖)", 60, 90, 70)
+                params['rsi_low'] = st.slider("超卖阈值 (买入线)", 10, 40, 30)
+                params['rsi_high'] = st.slider("超买阈值 (卖出线)", 60, 90, 70)
             elif s_code == "Bollinger":
-                params['boll_period'] = st.slider("周期", 10, 50, 20)
-                params['boll_dev'] = st.slider("标准差倍数", 1.0, 3.0, 2.0)
+                params['boll_period'] = st.slider("计算周期", 10, 50, 20)
+                params['boll_dev'] = st.slider("标准差倍数 (通道宽度)", 1.0, 3.0, 2.0)
             elif s_code == "Turtle":
-                params['turtle_period'] = st.slider("突破周期", 10, 60, 20)
+                params['turtle_period'] = st.slider("突破周期 (天)", 10, 60, 20)
             elif s_code == "MeanRev":
                 params['mean_period'] = st.slider("均线周期", 10, 50, 20)
 
             st.divider()
-            use_risk = st.checkbox("开启自动止盈止损", value=True)
-            stop_loss = st.slider("止损 (Stop Loss)", 1, 20, 5) / 100.0
-            take_profit = st.slider("止盈 (Take Profit)", 5, 50, 15) / 100.0
+            use_risk = st.checkbox("开启自动止盈止损 (推荐)", value=True)
+            stop_loss = st.slider("止损比例 (跌多少卖)", 1, 20, 5) / 100.0
+            take_profit = st.slider("止盈比例 (涨多少卖)", 5, 50, 15) / 100.0
 
         run_btn = st.button("🚀 开始回测", type="primary", use_container_width=True)
 
         if run_btn:
             ticker_list = [t.strip() for t in tickers_input.split(',') if t.strip()]
-            if not ticker_list: st.error("请输入代码")
+            if not ticker_list: st.error("请输入至少一个股票代码")
             else:
-                with st.spinner("正在计算..."):
+                with st.spinner("正在连接数据源并计算..."):
                     data_dict, df_bench = get_multiple_data(data_source, ticker_list, start_date, datetime.date.today())
                     
-                    if not data_dict: st.error("数据获取失败。请检查代码或日期。")
+                    if not data_dict: st.error("数据获取失败。请检查代码是否正确。")
                     else:
                         cerebro = bt.Cerebro()
-                        
-                        # ==========================================
-                        # 🔥 核心修复：数据长度检查
-                        # ==========================================
-                        valid_data_count = 0
-                        min_bars = 60 # 至少需要60天数据才能计算慢线均线等指标
-                        
+                        valid_cnt = 0
+                        min_bars = 60
                         for t, df in data_dict.items():
                             if len(df) < min_bars:
-                                st.warning(f"⚠️ 股票 {t} 数据不足 {min_bars} 天，已跳过。请把'开始日期'往前调。")
+                                st.warning(f"⚠️ {t} 数据不足 {min_bars} 天，已跳过。")
                                 continue
-                            
                             data = bt.feeds.PandasData(dataname=df, name=t)
                             cerebro.adddata(data)
-                            valid_data_count += 1
+                            valid_cnt += 1
                         
-                        if valid_data_count == 0:
-                            st.error("❌ 所有股票数据都不足，无法运行回测。请调整开始日期。")
+                        if valid_cnt == 0: st.error("所有股票数据都不足，无法回测。")
                         else:
                             cerebro.addstrategy(PortfolioStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
                             cerebro.broker.setcash(cash)
@@ -337,27 +352,65 @@ def main():
                                 
                                 c1, c2, c3 = st.columns(3)
                                 c1.metric("最终资产", f"${final_cash/1000:.1f}k")
-                                c2.metric("总收益", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
+                                c2.metric("总收益率", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
                                 c3.metric("最大回撤", f"{max_dd:.1f}%")
                                 
                                 fig, ax = plt.subplots(figsize=(8, 4))
                                 cum_strat = (1 + strat_returns).cumprod()
-                                ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2, label='策略')
+                                ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2, label='我的策略')
                                 if bench_returns is not None:
                                     cum_bench = (1 + bench_returns).cumprod()
-                                    ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6, label='基准')
+                                    ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6, label='市场基准')
                                 ax.legend()
                                 st.pyplot(fig)
                                 
-                                with st.expander("📊 详细数据报告 (手机友好版)"):
+                                with st.expander("📊 详细数据报告 (中文版)"):
                                     try:
+                                        # 1. 获取原始指标表
                                         metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
-                                        st.dataframe(metrics, use_container_width=True)
+                                        
+                                        # 2. 汉化翻译字典
+                                        trans_map = {
+                                            'Start Period': '开始日期', 'End Period': '结束日期',
+                                            'Risk-Free Rate': '无风险利率', 'Time in Market': '持仓时间占比',
+                                            'Cumulative Return': '累计收益率', 'CAGR﹪': '年化收益率',
+                                            'Sharpe': '夏普比率 (Sharpe)', 'Prob. Sharpe Ratio': '概率夏普比',
+                                            'Sortino': '索提诺比率', 'Sortino/√2': '索提诺/√2',
+                                            'Omega': '欧米伽比率', 'Max Drawdown': '最大回撤',
+                                            'Longest DD Days': '最长回撤天数', 'Volatility (ann.)': '年化波动率',
+                                            'R^2': 'R平方 (拟合度)', 'Information Ratio': '信息比率',
+                                            'Calmar': '卡玛比率', 'Skew': '偏度', 'Kurtosis': '峰度',
+                                            'Expected Daily %%': '日均预期收益', 'Expected Monthly %%': '月均预期收益',
+                                            'Expected Yearly %%': '年均预期收益', 'Kelly Criterion': '凯利公式仓位',
+                                            'Risk of Ruin': '破产概率', 'Daily Value-at-Risk': '日风险价值(VaR)',
+                                            'Expected Shortfall (cVaR)': '预期亏损(cVaR)',
+                                            'Gain/Pain Ratio': '收益痛苦比', 'Gain/Pain (1M)': '收益痛苦比(1月)',
+                                            'Payoff Ratio': '盈亏比', 'Profit Factor': '获利因子',
+                                            'Common Sense Ratio': '常识比率', 'CPC Index': 'CPC指数',
+                                            'Tail Ratio': '尾部比率', 'Outlier Win Ratio': '异常盈利比',
+                                            'Outlier Loss Ratio': '异常亏损比', 'MTD': '本月收益',
+                                            '3M': '近3月收益', '6M': '近6月收益', 'YTD': '今年以来收益',
+                                            '1Y': '近1年收益', '3Y (ann.)': '近3年年化',
+                                            '5Y (ann.)': '近5年年化', '10Y (ann.)': '近10年年化',
+                                            'All-time (ann.)': '全时段年化', 'Best Day': '最好的一天',
+                                            'Worst Day': '最惨的一天', 'Best Month': '最好的月',
+                                            'Worst Month': '最惨的月', 'Best Year': '最好的年',
+                                            'Worst Year': '最惨的年', 'Avg. Drawdown': '平均回撤',
+                                            'Avg. Drawdown Days': '平均回撤天数', 'Recovery Factor': '恢复因子',
+                                            'Ulcer Index': '溃疡指数', 'Serenity Index': '宁静指数',
+                                            'Avg. Up Month': '平均上涨月收益', 'Avg. Down Month': '平均下跌月收益',
+                                            'Win Days %%': '盈利天数占比', 'Win Month %%': '盈利月数占比',
+                                            'Win Quarter %%': '盈利季度占比', 'Win Year %%': '盈利年份占比'
+                                        }
+                                        
+                                        # 3. 应用翻译
+                                        metrics_cn = metrics.rename(index=trans_map)
+                                        st.dataframe(metrics_cn, use_container_width=True)
                                         
                                         report_file = "qs_report.html"
-                                        qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
+                                        qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Quant Report", download_filename=report_file)
                                         with open(report_file, 'r', encoding='utf-8') as f:
-                                            st.download_button("📥 下载完整图表报告 (电脑端查看)", f, file_name="report.html")
+                                            st.download_button("📥 下载完整HTML报告 (含热力图)", f, file_name="report.html")
                                     except Exception as e:
                                         st.error(f"指标计算失败: {e}")
                             except Exception as e:
