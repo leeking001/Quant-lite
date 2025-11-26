@@ -42,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎 (保持不变)
+# 1. 策略引擎
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -64,6 +64,10 @@ class PortfolioStrategy(bt.Strategy):
     def __init__(self):
         self.inds = {} 
         for d in self.datas:
+            # 动态获取该股票的指标参数，防止数据长度不够计算长周期指标
+            # 这里做一个简单的容错：如果数据长度不够，Backtrader通常会在预处理阶段报错
+            # 所以我们在主程序里做长度过滤更安全
+            
             if self.params.strategy_type == 'SMA':
                 sma1 = bt.indicators.SimpleMovingAverage(d, period=self.params.pfast)
                 sma2 = bt.indicators.SimpleMovingAverage(d, period=self.params.pslow)
@@ -84,104 +88,93 @@ class PortfolioStrategy(bt.Strategy):
                 else: self.inds[d]['right'] = float(self.params.builder_param)
 
     def next(self):
+        # 动态计算仓位：总资金的 95% 除以 股票数量
+        # 注意：如果某只股票数据中间断了，len(self.datas) 依然是总数，这没问题
         target_pct = 0.95 / len(self.datas)
+        
         for d in self.datas:
+            # 检查数据是否足够长以产生信号 (防止某些指标前期为 NaN)
+            # Backtrader 内部会自动处理 NaN，但为了保险起见
+            if len(d) < self.params.pslow: 
+                continue
+
             pos = self.getposition(d).size
+            
             # 风控
             if pos != 0 and self.params.use_risk_mgmt:
                 buy_price = self.getposition(d).price
-                pnl_pct = (d.close[0] - buy_price) / buy_price
-                if pnl_pct <= -self.params.stop_loss: self.close(data=d); continue 
-                if pnl_pct >= self.params.take_profit: self.close(data=d); continue
+                if buy_price > 0: # 防止除以0
+                    pnl_pct = (d.close[0] - buy_price) / buy_price
+                    if pnl_pct <= -self.params.stop_loss: self.close(data=d); continue 
+                    if pnl_pct >= self.params.take_profit: self.close(data=d); continue
 
             # 策略逻辑
             signal_buy = False
             signal_sell = False
 
-            if self.params.strategy_type == 'Builder':
-                left_val = self.inds[d]['left'][0]
-                right_val = self.inds[d]['right'][0] if hasattr(self.inds[d]['right'], '__getitem__') else self.inds[d]['right']
-                op = self.params.builder_operator
-                condition = (left_val > right_val) if op == '>' else (left_val < right_val)
-                if condition: signal_buy = True
-                else: signal_sell = True
-            elif self.params.strategy_type == 'SMA':
-                if self.inds[d] > 0: signal_buy = True
-                elif self.inds[d] < 0: signal_sell = True
-            elif self.params.strategy_type == 'RSI':
-                if self.inds[d] < self.params.rsi_low: signal_buy = True
-                elif self.inds[d] > self.params.rsi_high: signal_sell = True
-            elif self.params.strategy_type == 'Bollinger':
-                if d.close[0] < self.inds[d].lines.bot[0]: signal_buy = True
-                elif d.close[0] > self.inds[d].lines.top[0]: signal_sell = True
-            elif self.params.strategy_type == 'Turtle':
-                if d.close[0] > self.inds[d]['high'][0]: signal_buy = True
-                elif d.close[0] < self.inds[d]['low'][0]: signal_sell = True
-            elif self.params.strategy_type == 'MeanRev':
-                if self.inds[d]['dist'][0] < -0.05: signal_buy = True
-                elif d.close[0] >= self.inds[d]['sma'][0]: signal_sell = True
+            try:
+                if self.params.strategy_type == 'Builder':
+                    left_val = self.inds[d]['left'][0]
+                    right_val = self.inds[d]['right'][0] if hasattr(self.inds[d]['right'], '__getitem__') else self.inds[d]['right']
+                    op = self.params.builder_operator
+                    condition = (left_val > right_val) if op == '>' else (left_val < right_val)
+                    if condition: signal_buy = True
+                    else: signal_sell = True
+                elif self.params.strategy_type == 'SMA':
+                    if self.inds[d] > 0: signal_buy = True
+                    elif self.inds[d] < 0: signal_sell = True
+                elif self.params.strategy_type == 'RSI':
+                    if self.inds[d] < self.params.rsi_low: signal_buy = True
+                    elif self.inds[d] > self.params.rsi_high: signal_sell = True
+                elif self.params.strategy_type == 'Bollinger':
+                    if d.close[0] < self.inds[d].lines.bot[0]: signal_buy = True
+                    elif d.close[0] > self.inds[d].lines.top[0]: signal_sell = True
+                elif self.params.strategy_type == 'Turtle':
+                    if d.close[0] > self.inds[d]['high'][0]: signal_buy = True
+                    elif d.close[0] < self.inds[d]['low'][0]: signal_sell = True
+                elif self.params.strategy_type == 'MeanRev':
+                    if self.inds[d]['dist'][0] < -0.05: signal_buy = True
+                    elif d.close[0] >= self.inds[d]['sma'][0]: signal_sell = True
+            except:
+                # 如果指标计算出错（例如数据不够），忽略该信号
+                continue
 
             if not pos and signal_buy: self.order_target_percent(data=d, target=target_pct)
             elif pos and signal_sell: self.close(data=d)
 
 # ==========================================
-# 2. 数据获取 (V3.3 终极修复版：Yahoo 智能后缀)
+# 2. 数据获取
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_multiple_data(source, tickers_list, start_date, end_date):
     data_dict = {}
     bench_df = pd.DataFrame()
     
-    # 1. 获取股票数据
     for ticker in tickers_list:
         ticker = ticker.strip()
         if not ticker: continue
         
-        # --- A股智能后缀处理 ---
-        # 如果用户选了A股，且输入的是纯数字，自动加后缀
         search_ticker = ticker
         if source == "A股" and ticker.isdigit():
-            if ticker.startswith('6'):
-                search_ticker = f"{ticker}.SS" # 上海
-            elif ticker.startswith('0') or ticker.startswith('3'):
-                search_ticker = f"{ticker}.SZ" # 深圳
-            elif ticker.startswith('4') or ticker.startswith('8'):
-                search_ticker = f"{ticker}.BJ" # 北京
-        # ---------------------
+            if ticker.startswith('6'): search_ticker = f"{ticker}.SS"
+            elif ticker.startswith('0') or ticker.startswith('3'): search_ticker = f"{ticker}.SZ"
+            elif ticker.startswith('4') or ticker.startswith('8'): search_ticker = f"{ticker}.BJ"
 
         try:
-            # 统一使用 Yahoo Finance，因为它在云端最稳定
             df = yf.download(search_ticker, start=start_date, end=end_date, progress=False, timeout=10)
-            
-            # 数据清洗
-            if isinstance(df.columns, pd.MultiIndex): 
-                df.columns = df.columns.get_level_values(0)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             df.columns = df.columns.str.lower()
-            
-            # 修复时区问题 (Yahoo 返回的是带时区的，Backtrader 不喜欢)
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None)
+            if df.index.tz is not None: df.index = df.index.tz_localize(None)
+            if not df.empty: data_dict[ticker] = df 
+        except: pass
 
-            if not df.empty: 
-                data_dict[ticker] = df # 存回字典时用原始代码(如600519)做key，方便显示
-        except: 
-            pass
-
-    # 2. 获取基准数据
     try:
-        bench_ticker = "^GSPC" # 默认标普500
-        if source == "A股":
-            bench_ticker = "000300.SS" # 沪深300 (Yahoo代码)
-            
+        bench_ticker = "^GSPC" 
+        if source == "A股": bench_ticker = "000300.SS"
         bench_df = yf.download(bench_ticker, start=start_date, end=end_date, progress=False)
-        
-        if isinstance(bench_df.columns, pd.MultiIndex): 
-            bench_df.columns = bench_df.columns.get_level_values(0)
+        if isinstance(bench_df.columns, pd.MultiIndex): bench_df.columns = bench_df.columns.get_level_values(0)
         bench_df.columns = bench_df.columns.str.lower()
-        
-        if bench_df.index.tz is not None:
-            bench_df.index = bench_df.index.tz_localize(None)
-            
+        if bench_df.index.tz is not None: bench_df.index = bench_df.index.tz_localize(None)
     except: pass
 
     return data_dict, bench_df
@@ -192,52 +185,31 @@ def get_multiple_data(source, tickers_list, start_date, end_date):
 def show_manual():
     st.markdown("""
     ### 📘 新手保姆级手册
-    
     **第一步：准备工作**
     1.  **选市场**: 玩茅台选 **A股**，玩苹果/特斯拉选 **美股/港股**。
-    2.  **输代码**: 
-        *   A股直接输数字，如 `600519`。
-        *   美股输字母，如 `AAPL`。
-        *   支持多只！用逗号隔开，例如 `600519, 000858`。
-    3.  **本金**: 建议填 **100,000** 以上，否则可能买不起一手高价股。
-
+    2.  **输代码**: A股输数字(如600519)，美股输字母(如AAPL)。支持多只，逗号隔开。
+    3.  **本金**: 建议填 **100,000** 以上。
     **第二步：选择策略**
     *   **稳健型**: 推荐 **双均线 (SMA)** 或 **布林带**。
     *   **激进型**: 推荐 **海龟交易** 或 **RSI**。
-    *   **DIY型**: 使用 **策略工厂** 自己拼逻辑。
-
     **第三步：风控 (必看!)**
-    *   **止损**: 亏了多少比例强制卖出。建议 **5%**。
-    *   **止盈**: 赚了多少比例强制卖出。建议 **15%**。
+    *   **止损**: 建议 **5%**。
+    *   **止盈**: 建议 **15%**。
     """)
 
 def show_wiki():
     st.markdown("""
-    ### 🧠 策略百科全书 (共5种)
-
+    ### 🧠 策略百科全书
     #### 1. 双均线 (SMA Cross)
-    *   **原理**: "金叉买，死叉卖"。快线（如10日）上穿慢线（如30日）买入。
-    *   **适用**: **大趋势行情**。
-    *   **缺点**: 震荡市会频繁打脸亏损。
-
+    *   **原理**: 快线上穿慢线买入。**适用**: 大趋势。**缺点**: 震荡市亏损。
     #### 2. RSI (相对强弱)
-    *   **原理**: "物极必反"。分数低（<30）说明超卖，买入；分数高（>70）说明超买，卖出。
-    *   **适用**: **震荡市**（箱体波动）。
-    *   **缺点**: 大牛市中会过早卖出，踏空后续涨幅。
-
-    #### 3. 布林带 (Bollinger Bands)
-    *   **原理**: "回归中枢"。股价通常在通道内运行。跌破下轨买入，突破上轨卖出。
-    *   **适用**: **震荡修复行情**。
-    *   **缺点**: 在单边暴跌中，股价会沿着下轨一直跌，导致过早抄底被套。
-
+    *   **原理**: 低分抄底，高分逃顶。**适用**: 震荡市。**缺点**: 牛市踏空。
+    #### 3. 布林带 (Bollinger)
+    *   **原理**: 跌破下轨买，突破上轨卖。**适用**: 震荡修复。
     #### 4. 海龟交易 (Turtle)
-    *   **原理**: "追涨杀跌"。突破过去 N 天的最高价，说明新一轮趋势开始了，果断追涨。
-    *   **适用**: **大牛市、大熊市**。
-    *   **缺点**: 假突破。看着突破了，买进去立马回调。
-
+    *   **原理**: 突破新高追涨。**适用**: 大牛市。**缺点**: 假突破。
     #### 5. 均值回归 (Mean Reversion)
-    *   **原理**: "橡皮筋理论"。价格偏离均线太远（如跌了5%），总会弹回来。
-    *   **适用**: **急涨急跌**后的反弹。
+    *   **原理**: 偏离均线太远会回调。**适用**: 急涨急跌。
     """)
 
 # ==========================================
@@ -319,59 +291,77 @@ def main():
                 with st.spinner("正在计算..."):
                     data_dict, df_bench = get_multiple_data(data_source, ticker_list, start_date, datetime.date.today())
                     
-                    if not data_dict: st.error("数据获取失败。如果是A股，请确认代码正确（如 600519）。")
+                    if not data_dict: st.error("数据获取失败。请检查代码或日期。")
                     else:
                         cerebro = bt.Cerebro()
+                        
+                        # ==========================================
+                        # 🔥 核心修复：数据长度检查
+                        # ==========================================
+                        valid_data_count = 0
+                        min_bars = 60 # 至少需要60天数据才能计算慢线均线等指标
+                        
                         for t, df in data_dict.items():
+                            if len(df) < min_bars:
+                                st.warning(f"⚠️ 股票 {t} 数据不足 {min_bars} 天，已跳过。请把'开始日期'往前调。")
+                                continue
+                            
                             data = bt.feeds.PandasData(dataname=df, name=t)
                             cerebro.adddata(data)
+                            valid_data_count += 1
                         
-                        cerebro.addstrategy(PortfolioStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
-                        cerebro.broker.setcash(cash)
-                        cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
-                        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-                        
-                        results = cerebro.run()
-                        strat = results[0]
-                        
-                        strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
-                        strat_returns.index = pd.to_datetime(strat_returns.index)
-                        
-                        bench_returns = None
-                        if not df_bench.empty and 'close' in df_bench.columns:
-                            bench_returns = df_bench['close'].pct_change().fillna(0)
-                            bench_returns.index = pd.to_datetime(bench_returns.index)
-                            bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
-
-                        final_cash = cerebro.broker.getvalue()
-                        ret_pct = (final_cash - cash) / cash
-                        max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
-                        
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("最终资产", f"${final_cash/1000:.1f}k")
-                        c2.metric("总收益", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
-                        c3.metric("最大回撤", f"{max_dd:.1f}%")
-                        
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        cum_strat = (1 + strat_returns).cumprod()
-                        ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2, label='策略')
-                        if bench_returns is not None:
-                            cum_bench = (1 + bench_returns).cumprod()
-                            ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6, label='基准')
-                        ax.legend()
-                        st.pyplot(fig)
-                        
-                        with st.expander("📊 详细数据报告 (手机友好版)"):
+                        if valid_data_count == 0:
+                            st.error("❌ 所有股票数据都不足，无法运行回测。请调整开始日期。")
+                        else:
+                            cerebro.addstrategy(PortfolioStrategy, strategy_type=s_code, use_risk_mgmt=use_risk, stop_loss=stop_loss, take_profit=take_profit, **params)
+                            cerebro.broker.setcash(cash)
+                            cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='returns')
+                            cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+                            
                             try:
-                                metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
-                                st.dataframe(metrics, use_container_width=True)
+                                results = cerebro.run()
+                                strat = results[0]
                                 
-                                report_file = "qs_report.html"
-                                qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
-                                with open(report_file, 'r', encoding='utf-8') as f:
-                                    st.download_button("📥 下载完整图表报告 (电脑端查看)", f, file_name="report.html")
+                                strat_returns = pd.Series(strat.analyzers.returns.get_analysis())
+                                strat_returns.index = pd.to_datetime(strat_returns.index)
+                                
+                                bench_returns = None
+                                if not df_bench.empty and 'close' in df_bench.columns:
+                                    bench_returns = df_bench['close'].pct_change().fillna(0)
+                                    bench_returns.index = pd.to_datetime(bench_returns.index)
+                                    bench_returns = bench_returns.reindex(strat_returns.index).fillna(0)
+
+                                final_cash = cerebro.broker.getvalue()
+                                ret_pct = (final_cash - cash) / cash
+                                max_dd = strat.analyzers.drawdown.get_analysis().get('max', {}).get('drawdown', 0)
+                                
+                                c1, c2, c3 = st.columns(3)
+                                c1.metric("最终资产", f"${final_cash/1000:.1f}k")
+                                c2.metric("总收益", f"{ret_pct*100:.1f}%", delta_color="normal" if ret_pct>0 else "inverse")
+                                c3.metric("最大回撤", f"{max_dd:.1f}%")
+                                
+                                fig, ax = plt.subplots(figsize=(8, 4))
+                                cum_strat = (1 + strat_returns).cumprod()
+                                ax.plot(cum_strat.index, cum_strat, color='#2962FF', linewidth=2, label='策略')
+                                if bench_returns is not None:
+                                    cum_bench = (1 + bench_returns).cumprod()
+                                    ax.plot(cum_bench.index, cum_bench, color='gray', linestyle='--', alpha=0.6, label='基准')
+                                ax.legend()
+                                st.pyplot(fig)
+                                
+                                with st.expander("📊 详细数据报告 (手机友好版)"):
+                                    try:
+                                        metrics = qs.reports.metrics(strat_returns, benchmark=bench_returns, mode='basic', display=False)
+                                        st.dataframe(metrics, use_container_width=True)
+                                        
+                                        report_file = "qs_report.html"
+                                        qs.reports.html(strat_returns, benchmark=bench_returns, output=report_file, title="Report", download_filename=report_file)
+                                        with open(report_file, 'r', encoding='utf-8') as f:
+                                            st.download_button("📥 下载完整图表报告 (电脑端查看)", f, file_name="report.html")
+                                    except Exception as e:
+                                        st.error(f"指标计算失败: {e}")
                             except Exception as e:
-                                st.error(f"指标计算失败: {e}")
+                                st.error(f"回测运行出错: {e}")
 
 if __name__ == '__main__':
     main()
