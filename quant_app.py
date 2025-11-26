@@ -42,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎 (回测用)
+# 1. 策略引擎
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -244,114 +244,127 @@ def show_wiki():
     *   **原理**: 突破新高追涨。**适用**: 大牛市。**缺点**: 假突破。
     #### 5. 均值回归 (Mean Reversion)
     *   **原理**: 偏离均线太远会回调。**适用**: 急涨急跌。
+    #### 6. 🛠️ 自定义策略
+    *   **玩法**: 像造句一样组合你的交易逻辑。
+    *   **例子**: 当 `[收盘价]` `[>]` `[均线]` `[20]` 时买入。
     """)
 
 # ==========================================
-# 5. 模拟操盘逻辑 (V4.0 新增)
+# 5. 模拟实战逻辑
 # ==========================================
 def init_sim_session():
     if 'sim_step' not in st.session_state:
-        st.session_state.sim_step = 50 # 从第50天开始，留出计算指标的时间
+        st.session_state.sim_step = 50 
         st.session_state.sim_cash = 100000
         st.session_state.sim_shares = 0
         st.session_state.sim_history = []
         st.session_state.sim_data = None
+        st.session_state.sim_indicators = None
+
+def calculate_sim_indicators(df, strategy_name):
+    inds = pd.DataFrame(index=df.index)
+    if strategy_name == "双均线 (SMA)":
+        inds['fast'] = df['close'].rolling(10).mean()
+        inds['slow'] = df['close'].rolling(30).mean()
+        inds['signal'] = 0
+        buy_cond = (inds['fast'] > inds['slow']) & (inds['fast'].shift(1) <= inds['slow'].shift(1))
+        sell_cond = (inds['fast'] < inds['slow']) & (inds['fast'].shift(1) >= inds['slow'].shift(1))
+        inds.loc[buy_cond, 'signal'] = 1
+        inds.loc[sell_cond, 'signal'] = -1
+    elif strategy_name == "RSI (反转)":
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        inds['rsi'] = 100 - (100 / (1 + rs))
+        inds['signal'] = 0
+        inds.loc[inds['rsi'] < 30, 'signal'] = 1
+        inds.loc[inds['rsi'] > 70, 'signal'] = -1
+    elif strategy_name == "布林带 (通道)":
+        inds['mid'] = df['close'].rolling(20).mean()
+        std = df['close'].rolling(20).std()
+        inds['top'] = inds['mid'] + 2 * std
+        inds['bot'] = inds['mid'] - 2 * std
+        inds['signal'] = 0
+        inds.loc[df['close'] < inds['bot'], 'signal'] = 1
+        inds.loc[df['close'] > inds['top'], 'signal'] = -1
+    return inds
 
 def run_simulation_tab():
-    st.info("🎮 **模拟操盘训练营**：时光倒流，遮住未来K线，训练你的盘感！")
-    
-    # 1. 设置
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        sim_ticker = st.text_input("训练代码", "600519", help="输入一个你想训练的股票代码")
-    with c2:
-        sim_source = st.selectbox("训练市场", ["A股", "美股/港股"])
-    
-    if st.button("🔄 开始/重置训练"):
-        with st.spinner("正在准备训练数据..."):
-            data_dict, _ = get_multiple_data(sim_source, [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
-            if sim_ticker in data_dict:
-                st.session_state.sim_data = data_dict[sim_ticker]
-                st.session_state.sim_step = 50
-                st.session_state.sim_cash = 100000
-                st.session_state.sim_shares = 0
-                st.session_state.sim_history = []
-                st.rerun()
-            else:
-                st.error("数据获取失败")
+    st.info("🤖 **策略实战演练**：看着策略自动交易，验证它的靠谱程度！")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1: sim_ticker = st.text_input("演练代码", "600519")
+    with c2: sim_strat = st.selectbox("演练策略", ["双均线 (SMA)", "RSI (反转)", "布林带 (通道)"])
+    with c3: 
+        if st.button("🔄 重置/开始"):
+            with st.spinner("准备数据..."):
+                data_dict, _ = get_multiple_data("A股", [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
+                if sim_ticker in data_dict:
+                    st.session_state.sim_data = data_dict[sim_ticker]
+                    st.session_state.sim_indicators = calculate_sim_indicators(st.session_state.sim_data, sim_strat)
+                    st.session_state.sim_step = 50
+                    st.session_state.sim_cash = 100000
+                    st.session_state.sim_shares = 0
+                    st.session_state.sim_history = []
+                    st.rerun()
 
-    # 2. 操盘界面
     if st.session_state.get('sim_data') is not None:
         df = st.session_state.sim_data
-        curr_step = st.session_state.sim_step
+        inds = st.session_state.sim_indicators
+        step = st.session_state.sim_step
         
-        if curr_step >= len(df):
-            st.success("🎉 恭喜！你跑完了所有行情。")
+        if step >= len(df):
+            st.success("演练结束！")
             return
 
-        # 获取当前切片数据
-        curr_date = df.index[curr_step]
-        curr_price = df['close'].iloc[curr_step]
-        prev_price = df['close'].iloc[curr_step-1]
-        change_pct = (curr_price - prev_price) / prev_price
+        curr_date = df.index[step]
+        curr_price = df['close'].iloc[step]
+        signal = inds['signal'].iloc[step]
+        action_msg = ""
+        
+        if signal == 1 and st.session_state.sim_shares == 0:
+            cost = st.session_state.sim_cash * 0.95
+            shares = int(cost / curr_price)
+            st.session_state.sim_shares = shares
+            st.session_state.sim_cash -= shares * curr_price
+            st.session_state.sim_history.append(f"🟢 {curr_date.date()} [策略买入] {shares}股 @ {curr_price:.2f}")
+            action_msg = "🟢 策略触发买入信号，已自动执行！"
+        elif signal == -1 and st.session_state.sim_shares > 0:
+            st.session_state.sim_cash += st.session_state.sim_shares * curr_price
+            st.session_state.sim_history.append(f"🔴 {curr_date.date()} [策略卖出] {st.session_state.sim_shares}股 @ {curr_price:.2f}")
+            st.session_state.sim_shares = 0
+            action_msg = "🔴 策略触发卖出信号，已自动执行！"
 
-        # --- 仪表盘 ---
-        m1, m2, m3, m4 = st.columns(4)
         total_asset = st.session_state.sim_cash + st.session_state.sim_shares * curr_price
-        pnl_pct = (total_asset - 100000) / 100000
+        pnl = (total_asset - 100000) / 100000
         
+        if action_msg: st.toast(action_msg, icon="🤖")
+        
+        m1, m2, m3 = st.columns(3)
         m1.metric("当前日期", curr_date.strftime("%Y-%m-%d"))
-        m2.metric("当前价格", f"{curr_price:.2f}", f"{change_pct*100:.2f}%")
-        m3.metric("总资产", f"{total_asset:.0f}", f"{pnl_pct*100:.2f}%")
-        m4.metric("持仓", f"{st.session_state.sim_shares} 股")
+        m2.metric("当前价格", f"{curr_price:.2f}")
+        m3.metric("总资产", f"{total_asset:.0f}", f"{pnl*100:.2f}%")
 
-        # --- K线图 (只显示到当前日期) ---
-        show_df = df.iloc[:curr_step+1].copy()
-        # 计算简单均线辅助
-        show_df['MA20'] = show_df['close'].rolling(20).mean()
-        
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(show_df.index, show_df['close'], label='收盘价', color='black')
-        ax.plot(show_df.index, show_df['MA20'], label='20日均线', color='orange', alpha=0.7)
+        show_df = df.iloc[step-50:step+1]
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(show_df.index, show_df['close'], label='Price')
+        if sim_strat == "双均线 (SMA)":
+            ax.plot(show_df.index, inds['fast'].iloc[step-50:step+1], label='Fast MA', linestyle='--')
+            ax.plot(show_df.index, inds['slow'].iloc[step-50:step+1], label='Slow MA', linestyle='--')
         ax.legend()
-        ax.set_title(f"{sim_ticker} 走势图 (隐藏未来)")
         st.pyplot(fig)
 
-        # --- 操作区 ---
-        col_buy, col_sell, col_next = st.columns(3)
-        
-        # 买入逻辑
-        with col_buy:
-            if st.button("🟢 买入 (半仓)"):
-                cost = total_asset * 0.5
-                if st.session_state.sim_cash >= cost:
-                    shares_to_buy = int(cost / curr_price)
-                    st.session_state.sim_shares += shares_to_buy
-                    st.session_state.sim_cash -= shares_to_buy * curr_price
-                    st.session_state.sim_history.append(f"{curr_date.date()}: 买入 {shares_to_buy} 股 @ {curr_price:.2f}")
-                    st.toast("买入成功！")
-                else:
-                    st.error("现金不足！")
-
-        # 卖出逻辑
-        with col_sell:
-            if st.button("🔴 卖出 (全仓)"):
-                if st.session_state.sim_shares > 0:
-                    st.session_state.sim_cash += st.session_state.sim_shares * curr_price
-                    st.session_state.sim_history.append(f"{curr_date.date()}: 卖出 {st.session_state.sim_shares} 股 @ {curr_price:.2f}")
-                    st.session_state.sim_shares = 0
-                    st.toast("卖出成功！")
-                else:
-                    st.error("没有持仓！")
-
-        # 下一步
-        with col_next:
-            if st.button("⏭️ 下一天 (观望)"):
+        c_next, c_auto = st.columns(2)
+        with c_next:
+            if st.button("⏭️ 下一天 (单步)"):
                 st.session_state.sim_step += 1
                 st.rerun()
-
-        # 交易记录
-        with st.expander("📜 交易记录"):
+        with c_auto:
+            if st.button("⏩ 快进 7 天"):
+                st.session_state.sim_step += 7
+                st.rerun()
+        
+        with st.expander("📜 自动交易记录", expanded=True):
             for h in reversed(st.session_state.sim_history):
                 st.text(h)
 
@@ -362,15 +375,13 @@ def main():
     st.set_page_config(page_title="量化交易模拟器", layout="wide", page_icon="📈", initial_sidebar_state="collapsed")
     st.title("📈 量化交易模拟器")
     
-    # 初始化 Session State
     init_sim_session()
 
-    # Tab 顺序
-    tab_sim, tab_game, tab_manual, tab_wiki = st.tabs(["🚀 策略回测", "🎮 模拟操盘", "📘 新手手册", "🧠 策略百科"])
+    tab_sim, tab_game, tab_manual, tab_wiki = st.tabs(["🚀 策略回测", "🤖 策略实战演练", "📘 新手手册", "🧠 策略百科"])
 
     with tab_manual: show_manual()
     with tab_wiki: show_wiki()
-    with tab_game: run_simulation_tab() # V4.0 新增入口
+    with tab_game: run_simulation_tab()
 
     with tab_sim:
         col_input, col_action = st.columns([3, 1])
@@ -484,7 +495,6 @@ def main():
                                     bench_total = (1 + bench_returns).cumprod().iloc[-1] - 1
                                     alpha = ret_pct - bench_total
 
-                                # --- 智能顾问报告 ---
                                 stars, verdict, advice, next_step = generate_strategy_report(ret_pct, max_dd, alpha, sharpe)
                                 
                                 st.divider()
