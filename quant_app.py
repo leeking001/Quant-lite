@@ -42,7 +42,7 @@ init_chinese_font()
 import backtrader as bt
 
 # ==========================================
-# 1. 策略引擎
+# 1. 策略引擎 (回测用)
 # ==========================================
 class PortfolioStrategy(bt.Strategy):
     params = (
@@ -219,13 +219,26 @@ def generate_strategy_report(ret_pct, max_dd, alpha, sharpe):
 def show_manual():
     st.markdown("""
     ### 📘 新手保姆级手册 (完整版)
+
     #### 1. 什么是量化回测？(时光机原理)
     想象你有一台**时光机**。你带着 **10万块钱** 回到了 **2021年**。你发誓严格执行一个死板的规则，绝不手软。这个模拟器就是帮你算出：**如果你真的这么做了，今天你手里会有多少钱？**
-    #### 2. 快速上手三步走
+
+    #### 2. 回测 vs 实战演练：有什么区别？
+    *   **🚀 策略回测 (看录像)**：
+        *   **模式**：一键跑完过去3年的所有行情。
+        *   **作用**：快速验证策略是否靠谱，筛选出赚钱的参数。
+        *   **比喻**：像是在看一场已经踢完的球赛录像，分析哪里踢得好。
+    *   **🤖 实战演练 (打模拟赛)**：
+        *   **模式**：把未来的K线遮住，一天一天地走。
+        *   **作用**：让你看着策略在“当下”是如何买卖的，验证你是否能忍受中间的波动。
+        *   **比喻**：像是亲自上场踢球，你不知道下一秒对方会怎么传球。
+
+    #### 3. 快速上手三步走
     *   **第一步：选战场 (市场)**: A股(茅台) / 美股(苹果)。
     *   **第二步：选武器 (策略)**: 推荐双均线(稳健)或海龟(激进)。
     *   **第三步：设防线 (风控)**: 止损(保命) / 止盈(落袋)。
-    #### 3. 量化黑话词典
+
+    #### 4. 量化黑话词典
     *   **Alpha**: 比大盘多赚的钱。
     *   **夏普比率**: 性价比。>1.0 算好。
     *   **最大回撤**: 历史上最惨的一次亏损。
@@ -250,7 +263,7 @@ def show_wiki():
     """)
 
 # ==========================================
-# 5. 模拟实战逻辑
+# 5. 模拟实战逻辑 (V4.2 全策略支持版)
 # ==========================================
 def init_sim_session():
     if 'sim_step' not in st.session_state:
@@ -261,52 +274,139 @@ def init_sim_session():
         st.session_state.sim_data = None
         st.session_state.sim_indicators = None
 
-def calculate_sim_indicators(df, strategy_name):
+def calculate_sim_indicators(df, strategy_name, params):
+    """为模拟盘预计算指标 (Pandas版)"""
     inds = pd.DataFrame(index=df.index)
-    if strategy_name == "双均线 (SMA)":
-        inds['fast'] = df['close'].rolling(10).mean()
-        inds['slow'] = df['close'].rolling(30).mean()
-        inds['signal'] = 0
-        buy_cond = (inds['fast'] > inds['slow']) & (inds['fast'].shift(1) <= inds['slow'].shift(1))
-        sell_cond = (inds['fast'] < inds['slow']) & (inds['fast'].shift(1) >= inds['slow'].shift(1))
-        inds.loc[buy_cond, 'signal'] = 1
-        inds.loc[sell_cond, 'signal'] = -1
-    elif strategy_name == "RSI (反转)":
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        inds['rsi'] = 100 - (100 / (1 + rs))
-        inds['signal'] = 0
-        inds.loc[inds['rsi'] < 30, 'signal'] = 1
-        inds.loc[inds['rsi'] > 70, 'signal'] = -1
-    elif strategy_name == "布林带 (通道)":
-        inds['mid'] = df['close'].rolling(20).mean()
-        std = df['close'].rolling(20).std()
-        inds['top'] = inds['mid'] + 2 * std
-        inds['bot'] = inds['mid'] - 2 * std
-        inds['signal'] = 0
-        inds.loc[df['close'] < inds['bot'], 'signal'] = 1
-        inds.loc[df['close'] > inds['top'], 'signal'] = -1
+    inds['signal'] = 0 # 1=买, -1=卖
+    
+    try:
+        if strategy_name == "双均线 (趋势策略)":
+            inds['fast'] = df['close'].rolling(params['pfast']).mean()
+            inds['slow'] = df['close'].rolling(params['pslow']).mean()
+            buy_cond = (inds['fast'] > inds['slow']) & (inds['fast'].shift(1) <= inds['slow'].shift(1))
+            sell_cond = (inds['fast'] < inds['slow']) & (inds['fast'].shift(1) >= inds['slow'].shift(1))
+            inds.loc[buy_cond, 'signal'] = 1
+            inds.loc[sell_cond, 'signal'] = -1
+            
+        elif strategy_name == "RSI (反转策略)":
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(params['rsi_period']).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(params['rsi_period']).mean()
+            rs = gain / loss
+            inds['rsi'] = 100 - (100 / (1 + rs))
+            inds.loc[inds['rsi'] < params['rsi_low'], 'signal'] = 1
+            inds.loc[inds['rsi'] > params['rsi_high'], 'signal'] = -1
+            
+        elif strategy_name == "布林带 (通道策略)":
+            inds['mid'] = df['close'].rolling(params['boll_period']).mean()
+            std = df['close'].rolling(params['boll_period']).std()
+            inds['top'] = inds['mid'] + params['boll_dev'] * std
+            inds['bot'] = inds['mid'] - params['boll_dev'] * std
+            inds.loc[df['close'] < inds['bot'], 'signal'] = 1
+            inds.loc[df['close'] > inds['top'], 'signal'] = -1
+            
+        elif strategy_name == "海龟交易 (突破策略)":
+            # 过去N天的最高/最低 (不含今天，防止未来函数)
+            inds['high'] = df['high'].shift(1).rolling(params['turtle_period']).max()
+            inds['low'] = df['low'].shift(1).rolling(params['turtle_period']).min()
+            inds.loc[df['close'] > inds['high'], 'signal'] = 1
+            inds.loc[df['close'] < inds['low'], 'signal'] = -1
+            
+        elif strategy_name == "均值回归 (抄底策略)":
+            inds['sma'] = df['close'].rolling(params['mean_period']).mean()
+            inds['dist'] = (df['close'] - inds['sma']) / inds['sma']
+            inds.loc[inds['dist'] < -0.05, 'signal'] = 1 # 偏离-5%买入
+            inds.loc[df['close'] >= inds['sma'], 'signal'] = -1 # 回归均线卖出
+            
+        elif strategy_name == "🛠️ 自定义策略":
+            # 解析自定义参数
+            p_ind = params['builder_indicator']
+            p_op = params['builder_operator']
+            p_thres = params['builder_threshold']
+            p_val = params['builder_param']
+            
+            # 1. 左边
+            if p_ind == 'RSI':
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                left_series = 100 - (100 / (1 + rs))
+            else:
+                left_series = df['close']
+            
+            # 2. 右边
+            if p_thres == 'SMA':
+                right_series = df['close'].rolling(int(p_val)).mean()
+            else:
+                right_series = float(p_val)
+            
+            # 3. 比较
+            if p_op == '>':
+                cond = left_series > right_series
+            else:
+                cond = left_series < right_series
+                
+            # 简单的信号生成：满足条件买，不满足卖
+            inds.loc[cond, 'signal'] = 1
+            inds.loc[~cond, 'signal'] = -1
+            
+    except Exception as e:
+        st.error(f"指标计算错误: {e}")
+        
     return inds
 
 def run_simulation_tab():
     st.info("🤖 **策略实战演练**：看着策略自动交易，验证它的靠谱程度！")
-    c1, c2, c3 = st.columns([2, 2, 1])
-    with c1: sim_ticker = st.text_input("演练代码", "600519")
-    with c2: sim_strat = st.selectbox("演练策略", ["双均线 (SMA)", "RSI (反转)", "布林带 (通道)"])
-    with c3: 
-        if st.button("🔄 重置/开始"):
-            with st.spinner("准备数据..."):
-                data_dict, _ = get_multiple_data("A股", [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
-                if sim_ticker in data_dict:
-                    st.session_state.sim_data = data_dict[sim_ticker]
-                    st.session_state.sim_indicators = calculate_sim_indicators(st.session_state.sim_data, sim_strat)
-                    st.session_state.sim_step = 50
-                    st.session_state.sim_cash = 100000
-                    st.session_state.sim_shares = 0
-                    st.session_state.sim_history = []
-                    st.rerun()
+    
+    c1, c2 = st.columns([1, 1])
+    with c1: sim_ticker = st.text_input("演练代码", "601360")
+    with c2: 
+        sim_strat = st.selectbox("演练策略", [
+            "双均线 (趋势策略)", "RSI (反转策略)", "布林带 (通道策略)", 
+            "海龟交易 (突破策略)", "均值回归 (抄底策略)", "🛠️ 自定义策略"
+        ])
+    
+    # --- 演练参数配置 (与回测保持一致) ---
+    sim_params = {}
+    with st.expander("⚙️ 演练参数设置 (影响买卖点)", expanded=False):
+        if sim_strat == "双均线 (趋势策略)":
+            sim_params['pfast'] = st.slider("快线", 5, 30, 10, key='s_pfast')
+            sim_params['pslow'] = st.slider("慢线", 20, 60, 30, key='s_pslow')
+        elif sim_strat == "RSI (反转策略)":
+            sim_params['rsi_period'] = 14
+            sim_params['rsi_low'] = st.slider("超卖", 10, 40, 30, key='s_rlow')
+            sim_params['rsi_high'] = st.slider("超买", 60, 90, 70, key='s_rhigh')
+        elif sim_strat == "布林带 (通道策略)":
+            sim_params['boll_period'] = st.slider("周期", 10, 50, 20, key='s_bper')
+            sim_params['boll_dev'] = st.slider("倍数", 1.0, 3.0, 2.0, key='s_bdev')
+        elif sim_strat == "海龟交易 (突破策略)":
+            sim_params['turtle_period'] = st.slider("突破周期", 10, 60, 20, key='s_tper')
+        elif sim_strat == "均值回归 (抄底策略)":
+            sim_params['mean_period'] = st.slider("均线周期", 10, 50, 20, key='s_mper')
+        elif sim_strat == "🛠️ 自定义策略":
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                b_ind = st.selectbox("指标", ["收盘价", "RSI"], key='s_bind')
+                sim_params['builder_indicator'] = 'RSI' if 'RSI' in b_ind else 'Close'
+                sim_params['builder_operator'] = st.selectbox("比较", [">", "<"], key='s_bop')
+            with bc2:
+                b_thres = st.selectbox("阈值", ["均线 (SMA)", "固定数值"], key='s_bthres')
+                sim_params['builder_threshold'] = 'SMA' if 'SMA' in b_thres else 'Value'
+                sim_params['builder_param'] = st.number_input("参数值", 0, 10000, 20, key='s_bval')
+            sim_params['builder_operator'] = '>' if '>' in sim_params['builder_operator'] else '<'
+
+    if st.button("🔄 重置/开始演练"):
+        with st.spinner("准备数据..."):
+            data_dict, _ = get_multiple_data("A股", [sim_ticker], datetime.date(2022, 1, 1), datetime.date.today())
+            if sim_ticker in data_dict:
+                st.session_state.sim_data = data_dict[sim_ticker]
+                st.session_state.sim_indicators = calculate_sim_indicators(st.session_state.sim_data, sim_strat, sim_params)
+                st.session_state.sim_step = 50
+                st.session_state.sim_cash = 100000
+                st.session_state.sim_shares = 0
+                st.session_state.sim_history = []
+                st.rerun()
 
     if st.session_state.get('sim_data') is not None:
         df = st.session_state.sim_data
@@ -348,9 +448,15 @@ def run_simulation_tab():
         show_df = df.iloc[step-50:step+1]
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(show_df.index, show_df['close'], label='Price')
-        if sim_strat == "双均线 (SMA)":
-            ax.plot(show_df.index, inds['fast'].iloc[step-50:step+1], label='Fast MA', linestyle='--')
-            ax.plot(show_df.index, inds['slow'].iloc[step-50:step+1], label='Slow MA', linestyle='--')
+        
+        # 简单的可视化辅助
+        if "fast" in inds.columns:
+            ax.plot(show_df.index, inds['fast'].iloc[step-50:step+1], label='Fast', linestyle='--')
+            ax.plot(show_df.index, inds['slow'].iloc[step-50:step+1], label='Slow', linestyle='--')
+        elif "top" in inds.columns:
+            ax.plot(show_df.index, inds['top'].iloc[step-50:step+1], label='Top', linestyle=':', alpha=0.5)
+            ax.plot(show_df.index, inds['bot'].iloc[step-50:step+1], label='Bot', linestyle=':', alpha=0.5)
+            
         ax.legend()
         st.pyplot(fig)
 
